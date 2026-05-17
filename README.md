@@ -107,9 +107,75 @@ RL_Brand_Bound_CO/
 
 ## How to Run
 
-Stage 0 only ships the skeleton. Subsequent stages will fill in commands here:
+Install the package in editable mode once (so `scripts/` and `rl_bb` resolve):
 
-- Stage 1: `python -m rl_bb.instances.generate --config config/base.yaml`
+```bash
+pip install -e .
+```
+
+### Stage 1 — Generate instances
+
+Dummy mode (small instances, end-to-end verification, ~1 min):
+
+```bash
+python -m scripts.generate_instances \
+    --config config/base.yaml --config config/dummy.yaml
+```
+
+Full mode (literature-size, much longer):
+
+```bash
+python -m scripts.generate_instances --config config/base.yaml
+```
+
+Limit to one problem type with `--problem set_covering` or
+`--problem combinatorial_auction`. Output goes to
+`data/<experiment.name>/<problem>/<regime>/<split>/instance_XXXX.mps`.
+
+Run unit tests:
+
+```bash
+pytest tests/
+```
+
+### Stage 2 — Random-policy environment smoke test
+
+Roll out a uniform-random branching policy through a few dummy instances to
+verify the DFS-forced Ecole env, the bipartite observation, and the
+dual-bound-gain reward all wire up correctly:
+
+```bash
+python -m scripts.run_env_smoke \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem set_covering --n-instances 3
+```
+
+Logs land in `logs/env_smoke.log`.
+
+### Stage 3 — Collect expert demonstrations
+
+Reliability Branching demonstrations on the training split (used by Stage 5
+imitation pretraining):
+
+```bash
+python -m scripts.collect_demonstrations \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --expert rb --split train
+```
+
+FSB demonstrations on the val split (sanity baseline):
+
+```bash
+python -m scripts.collect_demonstrations \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --expert fsb --split val
+```
+
+Output goes to
+`data/<experiment.name>/demonstrations/<problem>/<regime>/<split>/<expert>/`.
+
+### Later stages (placeholders)
+
 - Stage 5: `python -m rl_bb.training.pretrain --config config/base.yaml`
 - Stage 6: `python -m rl_bb.training.ppo --config config/base.yaml`
 - Stage 7: `python -m rl_bb.eval.run --config config/base.yaml`

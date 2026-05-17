@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl_bb"
+version = "0.0.1"
+description = "RL-based variable selection for Branch-and-Bound on MILP."
+requires-python = ">=3.10"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rl_bb*"]

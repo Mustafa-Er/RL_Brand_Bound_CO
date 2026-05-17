@@ -1,0 +1,32 @@
+# Dummy override: tiny counts and smaller sizes for end-to-end verification.
+# Use with: python -m scripts.generate_instances --config config/base.yaml --config config/dummy.yaml
+
+experiment:
+  name: rl_bb_dummy
+
+env:
+  time_limit_s: 30.0
+  gap_limit: 0.0
+  # Dummy instances are so small that SCIP solves them at the root via
+  # presolving — yielding zero branching decisions. Disable presolve so we
+  # can actually exercise the env + experts end-to-end during verification.
+  # Full-size runs should leave presolve on (base.yaml does).
+  extra_scip_params:
+    presolving/maxrounds: 0
+
+instances:
+  counts:
+    train: 20
+    val: 10
+    test: 10
+  set_covering:
+    # density bumped to 0.1 because Ecole's set cover generator struggles
+    # to satisfy feasibility constraints at the literature default of 0.05
+    # when n_rows is small. Full-size runs in base.yaml keep 0.05.
+    train_size:       { n_rows: 100, n_cols: 200, density: 0.1 }
+    transfer_medium:  { n_rows: 150, n_cols: 300, density: 0.1 }
+    transfer_large:   { n_rows: 200, n_cols: 400, density: 0.1 }
+  combinatorial_auction:
+    train_size:       { n_items: 25, n_bids: 100 }
+    transfer_medium:  { n_items: 40, n_bids: 150 }
+    transfer_large:   { n_items: 50, n_bids: 200 }
