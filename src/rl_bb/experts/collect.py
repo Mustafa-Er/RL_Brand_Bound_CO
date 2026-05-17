@@ -1,14 +1,20 @@
-"""Demonstration collection: roll out an expert and dump (obs, action) pairs.
+"""Demonstration collection: roll out a policy and dump (obs, action) pairs.
+
+In this project the only caller is :mod:`scripts.collect_demonstrations`,
+which always passes :class:`~rl_bb.experts.policies.RBPolicy`. The
+``collect_many`` helper is policy-agnostic for testability, but the
+on-disk demonstration tree under ``data/<exp>/demonstrations/...`` only
+contains RB rollouts.
 
 Output layout::
 
-    <out_dir>/<problem>/<regime>/<split>/<expert>/instance_XXXX.pkl
+    <out_dir>/<problem>/<regime>/<split>/rb/instance_XXXX.pkl
 
 Each pickle is a dict with the keys::
 
     {
         "instance": "<filename>.mps",
-        "expert": "RB" | "FSB" | "Random",
+        "expert": "RBPolicy",                   # type(policy).__name__
         "observations": [bipartite_obs, ...],   # one per branching decision
         "actions":      [int, ...],             # SCIP variable index
         "action_sets":  [array, ...],           # candidate sets per step

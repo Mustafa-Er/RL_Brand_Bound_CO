@@ -135,12 +135,32 @@ class GCNN(nn.Module):
             var_h = var_conv(var_h, cons_h, cons_idx, var_idx, edge_h)
         return var_h
 
-    def forward(self, t: BipartiteTensors) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return ``(logits, value)`` — logits per variable, scalar value."""
+    def forward(
+        self,
+        t: BipartiteTensors,
+        graph_ids: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return ``(logits, value)``.
+
+        ``logits`` has shape ``(n_vars,)`` whether or not the input is
+        batched. ``value`` is a scalar for a single graph or a vector of
+        per-graph values when ``graph_ids`` is supplied.
+        """
         var_h = self._backbone(t)
-        logits = self.policy_head(var_h).squeeze(-1)              # (n_vars,)
-        pooled = var_h.mean(dim=0, keepdim=True)                   # (1, hidden)
-        value = self.value_head(pooled).squeeze(-1).squeeze(-1)    # scalar
+        logits = self.policy_head(var_h).squeeze(-1)
+        if graph_ids is None:
+            pooled = var_h.mean(dim=0, keepdim=True)               # (1, hidden)
+            value = self.value_head(pooled).squeeze(-1).squeeze(-1)
+        else:
+            n_graphs = int(graph_ids.max().item()) + 1
+            sums = _scatter_sum(var_h, graph_ids, n_graphs)
+            counts = _scatter_sum(
+                torch.ones(var_h.size(0), 1, device=var_h.device, dtype=var_h.dtype),
+                graph_ids,
+                n_graphs,
+            )
+            pooled = sums / counts.clamp(min=1.0)
+            value = self.value_head(pooled).squeeze(-1)            # (n_graphs,)
         return logits, value
 
     def forward_with_mask(

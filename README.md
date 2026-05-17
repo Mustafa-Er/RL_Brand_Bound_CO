@@ -14,11 +14,8 @@ Course project for AIE 635 (Reinforcement Learning).
   cloning on Reliability Branching demonstrations, matches or approaches FSB on
   set covering and combinatorial auction instances, and transfers to
   1.5× / 2× larger instances.
-- **Baselines:** Random branching, FSB (Full Strong Branching), and — if
-  available cleanly from Ecole — GCNN+SL (Gasse et al. 2019).
+- **Baselines:** Random branching and FSB (Full Strong Branching).
 - **Metrics:** wall-clock solve time, B&B node count, dual integral.
-
-The full project spec lives in `CLAUDE_CODE_PROMPT.md`.
 
 ---
 
@@ -162,31 +159,44 @@ python -m scripts.check_model \
     --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
 ```
 
-### Stage 3 — Collect expert demonstrations
+### Stage 3 — Collect Reliability Branching demonstrations
 
-Reliability Branching demonstrations on the training split (used by Stage 5
-imitation pretraining):
-
-```bash
-python -m scripts.collect_demonstrations \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --expert rb --split train
-```
-
-FSB demonstrations on the val split (sanity baseline):
+Reliability Branching is the sole expert for imitation pretraining. Roll
+it out on both the train and val splits so Stage 5 has data for both:
 
 ```bash
 python -m scripts.collect_demonstrations \
     --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --expert fsb --split val
+    --problem combinatorial_auction --split train
+
+python -m scripts.collect_demonstrations \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --split val
 ```
 
 Output goes to
-`data/<experiment.name>/demonstrations/<problem>/<regime>/<split>/<expert>/`.
+`data/<experiment.name>/demonstrations/<problem>/<regime>/<split>/rb/`.
+
+FSB and Random are kept as evaluation baselines (Stage 7); they are not
+collected as demonstrations.
+
+### Stage 5 — Imitation pretraining (behavioral cloning)
+
+After collecting RB demonstrations for the chosen problem on both train and
+val splits, run:
+
+```bash
+python -m scripts.pretrain \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+```
+
+The best-by-val-loss checkpoint lands at
+`checkpoints/<experiment.name>/pretrain_best.pt`, alongside
+`pretrain_history.json`.
 
 ### Later stages (placeholders)
 
-- Stage 5: `python -m rl_bb.training.pretrain --config config/base.yaml`
 - Stage 6: `python -m rl_bb.training.ppo --config config/base.yaml`
 - Stage 7: `python -m rl_bb.eval.run --config config/base.yaml`
 

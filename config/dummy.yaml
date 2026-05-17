@@ -30,3 +30,8 @@ instances:
     train_size:       { n_items: 25, n_bids: 100 }
     transfer_medium:  { n_items: 40, n_bids: 150 }
     transfer_large:   { n_items: 50, n_bids: 200 }
+
+pretrain:
+  epochs: 5
+  lr: 1.0e-3
+  batch_size: 8

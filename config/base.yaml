@@ -44,9 +44,9 @@ model:
     activation: relu
 
 pretrain:
-  epochs: null
-  lr: null
-  batch_size: null
+  epochs: 30
+  lr: 1.0e-3
+  batch_size: 32
 
 ppo:
   gamma: 0.99

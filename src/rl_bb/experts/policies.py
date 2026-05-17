@@ -4,8 +4,14 @@ All policies share the same call signature::
 
     action = policy.act(observation, action_set, model)
 
-This lets evaluation and demonstration collection be symmetric over Random,
-FSB, RB, and (later) the learned RL policy.
+Roles in this project:
+
+* :class:`RBPolicy` — *the* imitation-learning expert. Pretraining
+  demonstrations are produced by rolling this policy out on training
+  instances (Stage 3 + Stage 5).
+* :class:`FSBPolicy` — Stage 7 evaluation baseline (Full Strong Branching).
+  Not used for demonstration collection.
+* :class:`RandomPolicy` — sanity-check baseline.
 
 Observation type depends on the env factory used:
 
@@ -15,7 +21,7 @@ Observation type depends on the env factory used:
   ``(bipartite, strong_branching_scores)`` — needed by :class:`FSBPolicy`
   and :class:`RBPolicy`.
 
-The :class:`RBPolicy` implements reliability pseudocost branching
+:class:`RBPolicy` implements reliability pseudocost branching
 (Achterberg 2007): for each candidate variable, do full strong branching
 until it has been branched ``reliability`` times in each direction, then
 switch to SCIP's running pseudocost score.
