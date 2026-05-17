@@ -33,5 +33,6 @@ dependencies:
   # - jupyterlab
 
   - pip
-  - pip:
-      - # extra pip-only deps go here as project grows
+  # When pip-only deps are needed later, add:
+  # - pip:
+  #     - some-package==1.2.3
