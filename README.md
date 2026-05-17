@@ -51,7 +51,7 @@ Course project for AIE 635 (Reinforcement Learning).
 
 4. **Create the environment**:
    ```bash
-   conda env create -f environment.yml
+   conda env create -f environment.yml -n rl_bb
    conda activate rl_bb
    ```
 
@@ -74,7 +74,7 @@ Skip the WSL step:
 ```bash
 git clone https://github.com/Mustafa-Er/RL_Brand_Bound_CO.git
 cd RL_Brand_Bound_CO
-conda env create -f environment.yml
+conda env create -f environment.yml -n rl_bb
 conda activate rl_bb
 python -c "import ecole, pyscipopt, torch, torch_geometric; print('ok')"
 ```
@@ -109,6 +109,65 @@ Install the package in editable mode once (so `scripts/` and `rl_bb` resolve):
 ```bash
 pip install -e .
 ```
+
+### End-to-end reproduction (dummy mode)
+
+If you just cloned the repo and want to reproduce the full pipeline from
+scratch, run the following commands in order. Dummy mode finishes in under
+two minutes on a CPU and exercises every stage:
+
+```bash
+# 0. One-time setup (see Setup section above first)
+conda activate rl_bb
+pip install -e .
+
+# 1. Generate MILP instances (set covering + combinatorial auction)
+python -m scripts.generate_instances \
+    --config config/base.yaml --config config/dummy.yaml
+
+# 2. Sanity-check the Ecole env with a random policy (optional)
+python -m scripts.run_env_smoke \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --n-instances 3
+
+# 3. Collect Reliability Branching demonstrations for train + val
+python -m scripts.collect_demonstrations \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --split train
+python -m scripts.collect_demonstrations \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction --split val
+
+# 4. (Optional) GCNN forward-pass smoke check
+python -m scripts.check_model \
+    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
+
+# 5. Behavioral-cloning pretraining
+python -m scripts.pretrain \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+
+# 6. PPO training (warm-starts from the Stage-5 checkpoint)
+python -m scripts.ppo \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+
+# 7. Evaluation: Random vs. FSB vs. PPO across all three size regimes
+python -m scripts.eval \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+```
+
+Results land under `data/rl_bb_dummy/` (instances + demonstrations),
+`checkpoints/rl_bb_dummy/` (model weights), and `logs/rl_bb_dummy/`
+(training logs + final eval CSV/JSON).
+
+For the **full-scale run** that backs the paper's results, drop
+`--config config/dummy.yaml` from every command above so only
+`config/base.yaml` is used. This grows instances from a few hundred to ten
+thousand and PPO from 3 to 50 iterations; expect hours to a day depending on
+hardware. The remainder of this section documents each stage individually
+for selective re-runs and debugging.
 
 ### Stage 1 — Generate instances
 
@@ -239,8 +298,3 @@ Subset the policies with `--policies random fsb` or restrict instances with
 - The full conda environment is captured in `environment.yml`; pin updates
   through PRs so the team's environments stay aligned.
 
----
-
-## Contributing
-
-See `GIT_GUIDE.md` for the team Git workflow.
