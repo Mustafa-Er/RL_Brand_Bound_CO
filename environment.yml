@@ -1,0 +1,37 @@
+name: rl_bb
+
+channels:
+  - pytorch
+  - pyg
+  - conda-forge
+
+dependencies:
+  - python=3.10
+
+  # Core scientific stack
+  - numpy
+  - scipy
+  - pyyaml
+  - tqdm
+  - pytest
+
+  # MILP / B&B environment
+  - conda-forge::ecole
+  - conda-forge::pyscipopt
+
+  # PyTorch (CPU build by default; for CUDA see README)
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  - pytorch::cpuonly
+
+  # PyTorch Geometric
+  - pyg::pyg
+
+  # Optional developer tools (uncomment if desired)
+  # - ipython
+  # - jupyterlab
+
+  - pip
+  - pip:
+      - # extra pip-only deps go here as project grows

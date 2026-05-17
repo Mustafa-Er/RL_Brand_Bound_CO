@@ -1,0 +1,62 @@
+# Base configuration for RL-Brand-Bound CO experiments.
+# All randomness flows from `experiment.seed`. `device: auto` resolves at runtime
+# to "cuda" if torch.cuda.is_available() else "cpu".
+# This file is a Stage 0 placeholder; later stages will populate the empty fields.
+
+experiment:
+  name: rl_bb_default
+  seed: 0
+  device: auto          # auto | cuda | cpu
+
+paths:
+  data_dir: data
+  log_dir: logs
+  ckpt_dir: checkpoints
+
+instances:
+  problem_type: set_covering   # set_covering | combinatorial_auction
+  counts:
+    train: 10000
+    val: 2000
+    test: 100
+  set_covering:
+    train_size:       { n_rows: 500,  n_cols: 1000 }
+    transfer_medium:  { n_rows: 750,  n_cols: 1500 }
+    transfer_large:   { n_rows: 1000, n_cols: 2000 }
+  combinatorial_auction:
+    train_size:       { n_items: 100, n_bids: 500 }
+    transfer_medium:  { n_items: 150, n_bids: 750 }
+    transfer_large:   { n_items: 200, n_bids: 1000 }
+
+env:
+  node_selection: dfs
+  time_limit_s: 3600
+  gap_limit: 0.0
+
+expert:
+  type: reliability_branching   # used for pretraining demonstrations
+  fsb_for_eval: true            # FSB used as gold-standard baseline
+
+model:
+  gcnn:
+    embedding_size: 64
+    n_layers: 2
+    activation: relu
+
+pretrain:
+  epochs: null
+  lr: null
+  batch_size: null
+
+ppo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  lr: null
+  rollout_steps: null
+  update_epochs: null
+  minibatch_size: null
+
+eval:
+  metrics: [wall_time, node_count, dual_integral]
+  seeds: [0, 1, 2, 3, 4]
