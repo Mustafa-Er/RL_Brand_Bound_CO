@@ -152,6 +152,16 @@ python -m scripts.run_env_smoke \
 
 Logs land in `logs/env_smoke.log`.
 
+### Stage 4 — GCNN forward-pass check
+
+Verify the bipartite GCNN constructs, runs forward, and backpropagates on a
+real demonstration sample:
+
+```bash
+python -m scripts.check_model \
+    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
+```
+
 ### Stage 3 — Collect expert demonstrations
 
 Reliability Branching demonstrations on the training split (used by Stage 5
