@@ -195,9 +195,24 @@ The best-by-val-loss checkpoint lands at
 `checkpoints/<experiment.name>/pretrain_best.pt`, alongside
 `pretrain_history.json`.
 
+### Stage 6 — PPO training
+
+Warm-starts from `pretrain_best.pt` and updates the GCNN with PPO+GAE on
+rollouts through the branching environment:
+
+```bash
+python -m scripts.ppo \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+```
+
+Outputs:
+- `checkpoints/<experiment.name>/ppo_latest.pt` — latest weights
+- `checkpoints/<experiment.name>/ppo_best.pt`   — best-by-mean-reward
+- `checkpoints/<experiment.name>/ppo_history.json` — per-iteration metrics
+
 ### Later stages (placeholders)
 
-- Stage 6: `python -m rl_bb.training.ppo --config config/base.yaml`
 - Stage 7: `python -m rl_bb.eval.run --config config/base.yaml`
 
 ---

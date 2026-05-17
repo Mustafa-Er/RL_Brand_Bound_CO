@@ -35,3 +35,9 @@ pretrain:
   epochs: 5
   lr: 1.0e-3
   batch_size: 8
+
+ppo:
+  iterations: 3
+  rollouts_per_iter: 4
+  update_epochs: 2
+  minibatch_size: 4

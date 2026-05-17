@@ -52,10 +52,17 @@ ppo:
   gamma: 0.99
   gae_lambda: 0.95
   clip_eps: 0.2
-  lr: null
-  rollout_steps: null
-  update_epochs: null
-  minibatch_size: null
+  # lr kept conservative: BC pretraining leaves the value head untrained,
+  # so early PPO iterations see large value-loss gradients that can destabilize
+  # the shared backbone. Lower lr + smaller value_coef tames the first few
+  # iterations until V(s) catches up to typical return magnitudes.
+  lr: 3.0e-5
+  iterations: 50
+  rollouts_per_iter: 8
+  update_epochs: 4
+  minibatch_size: 16
+  value_coef: 0.25
+  entropy_coef: 0.01
 
 eval:
   metrics: [wall_time, node_count, dual_integral]
