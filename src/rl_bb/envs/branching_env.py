@@ -40,11 +40,18 @@ def _build_scip_params(cfg: EnvConfig) -> dict[str, Any]:
 
 
 def _info_functions() -> dict:
-    return {
+    info = {
         "nb_nodes": ecole.reward.NNodes().cumsum(),
         "lp_iterations": ecole.reward.LpIterations().cumsum(),
         "wall_time": ecole.reward.SolvingTime().cumsum(),
     }
+    # Ecole renamed the dual-integral reward across versions; try a few names.
+    for name in ("DualIntegral", "PrimalDualIntegral", "PrimalIntegral"):
+        cls = getattr(ecole.reward, name, None)
+        if cls is not None:
+            info["dual_integral"] = cls().cumsum()
+            break
+    return info
 
 
 def make_branching_env(cfg: EnvConfig) -> ecole.environment.Branching:

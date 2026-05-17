@@ -89,7 +89,7 @@ RL_Brand_Bound_CO/
 ├── src/rl_bb/          # Library code
 │   ├── instances/      # Instance generators (Stage 1)
 │   ├── envs/           # Ecole env wrappers, DFS node selection (Stage 2)
-│   ├── experts/        # RB and FSB expert interfaces (Stage 3)
+│   ├── experts/        # RB expert (Stage 3) + FSB/Random baselines (Stage 7)
 │   ├── models/         # GCNN policy + value heads (Stage 4)
 │   ├── training/       # pretrain.py (Stage 5), ppo.py (Stage 6)
 │   ├── eval/           # Evaluation pipeline (Stage 7)
@@ -149,16 +149,6 @@ python -m scripts.run_env_smoke \
 
 Logs land in `logs/env_smoke.log`.
 
-### Stage 4 — GCNN forward-pass check
-
-Verify the bipartite GCNN constructs, runs forward, and backpropagates on a
-real demonstration sample:
-
-```bash
-python -m scripts.check_model \
-    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
-```
-
 ### Stage 3 — Collect Reliability Branching demonstrations
 
 Reliability Branching is the sole expert for imitation pretraining. Roll
@@ -179,6 +169,16 @@ Output goes to
 
 FSB and Random are kept as evaluation baselines (Stage 7); they are not
 collected as demonstrations.
+
+### Stage 4 — GCNN forward-pass check
+
+Verify the bipartite GCNN constructs, runs forward, and backpropagates on a
+real demonstration sample (any non-empty pickle from Stage 3 works):
+
+```bash
+python -m scripts.check_model \
+    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
+```
 
 ### Stage 5 — Imitation pretraining (behavioral cloning)
 
@@ -211,9 +211,24 @@ Outputs:
 - `checkpoints/<experiment.name>/ppo_best.pt`   — best-by-mean-reward
 - `checkpoints/<experiment.name>/ppo_history.json` — per-iteration metrics
 
-### Later stages (placeholders)
+### Stage 7 — Evaluation
 
-- Stage 7: `python -m rl_bb.eval.run --config config/base.yaml`
+Runs Random, FSB, and the trained PPO policy on the **test** split of all
+three size regimes (training-size + transfer-medium + transfer-large) across
+multiple seeds, then writes:
+
+- `logs/<experiment.name>/eval_detail.csv`  — per-(policy, regime, seed, instance) rows
+- `logs/<experiment.name>/eval_summary.csv` — mean ± std per (policy, regime)
+- `logs/<experiment.name>/eval_summary.json` — same summary, machine-readable
+
+```bash
+python -m scripts.eval \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+```
+
+Subset the policies with `--policies random fsb` or restrict instances with
+`--max-instances 5` for quick smoke runs.
 
 ---
 
