@@ -76,12 +76,18 @@ def collect_many(
     out_dir: Path,
     seed: int = 0,
 ) -> int:
-    """Collect demonstrations for every instance; write one pickle each."""
+    """Collect demonstrations for every instance; write one pickle each.
+
+    Each instance is seeded independently as ``seed + i`` so that the
+    trajectory of instance *i* does not depend on how many instances preceded
+    it (i.e. changing the order of ``instances`` cannot affect any individual
+    trajectory).
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     env = make_expert_env(env_cfg)
-    env.seed(seed)
     written = 0
-    for inst in instances:
+    for i, inst in enumerate(instances):
+        env.seed(seed + i)   # independent seed per instance for reproducibility
         traj = collect_one(env, inst, policy)
         target = out_dir / f"{Path(inst).stem}.pkl"
         with open(target, "wb") as f:

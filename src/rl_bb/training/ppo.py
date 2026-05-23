@@ -101,7 +101,8 @@ def ppo_update_step(
         cand = torch.as_tensor(aset, dtype=torch.long, device=logits.device)
         cand_logits = logits[cand]
         log_softmax = F.log_softmax(cand_logits, dim=-1)
-        target_pos = aset.index(action)
+        aset_to_pos = {v: i for i, v in enumerate(aset)}   # O(1) lookup instead of O(N) .index()
+        target_pos = aset_to_pos[action]
         new_log_probs.append(log_softmax[target_pos])
         probs = log_softmax.exp()
         entropies.append(-(probs * log_softmax).sum())
@@ -230,6 +231,7 @@ def run_ppo(
 
         # ---- PPO updates ----
         update_records: list[UpdateStats] = []
+        model.train()   # rollout sets eval(); restore train mode before gradient updates
         for _ in range(update_epochs):
             rng.shuffle(samples)
             for start in range(0, len(samples), minibatch_size):

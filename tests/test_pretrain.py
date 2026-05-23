@@ -117,7 +117,8 @@ def test_run_pretrain_end_to_end(tiny_demo_dir: Path, tmp_path: Path):
         val_root=tiny_demo_dir / "val" / "rb",
         ckpt_dir=tmp_path / "ckpts",
     )
-    if BCDataset(paths.train_root).__len__() == 0:
+    train_ds = BCDataset(paths.train_root)
+    if len(train_ds) == 0:
         pytest.skip("no training samples")
 
     out = run_pretrain(

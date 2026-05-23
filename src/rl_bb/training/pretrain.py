@@ -56,7 +56,8 @@ def _step_loss(
     for action, action_set in zip(batch.actions, batch.action_sets):
         candidate_idx = torch.as_tensor(action_set, dtype=torch.long, device=logits.device)
         candidate_logits = logits[candidate_idx]                # (k,)
-        target_pos = action_set.index(action)
+        aset_to_pos = {v: i for i, v in enumerate(action_set)}  # O(1) lookup
+        target_pos = aset_to_pos[action]
         target = torch.tensor([target_pos], device=logits.device, dtype=torch.long)
         losses.append(F.cross_entropy(candidate_logits.unsqueeze(0), target))
 
@@ -224,7 +225,7 @@ def run_pretrain(
 
 def load_pretrained_gcnn(ckpt_path: Path, device: str = "cpu") -> GCNN:
     """Re-instantiate a GCNN from a saved checkpoint."""
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
     d_var, d_cons, d_edge = ckpt["feature_dims"]
     mcfg = ckpt["model_config"]
     model = GCNN(d_var, d_cons, d_edge, hidden=mcfg["hidden"], n_layers=mcfg["n_layers"])

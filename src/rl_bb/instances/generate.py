@@ -11,7 +11,9 @@ Directory layout produced::
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -142,10 +144,12 @@ def generate_all(
 
 
 def _seed_for(base_seed: int, problem_type: str, regime: str, split: str) -> int:
-    """Derive a stable per-bucket seed from the base seed."""
-    key = f"{problem_type}|{regime}|{split}"
-    # Simple stable hash: sum of code points mixed with base_seed.
-    h = base_seed
-    for ch in key:
-        h = (h * 1315423911) ^ ord(ch)
-    return h & 0x7FFFFFFF
+    """Derive a stable, collision-resistant per-bucket seed from the base seed.
+
+    Uses SHA-256 so that distinct ``(base_seed, problem_type, regime, split)``
+    tuples are virtually guaranteed to produce distinct seeds.  The result is
+    a non-negative 31-bit integer compatible with Ecole's RandomGenerator.
+    """
+    key = f"{base_seed}|{problem_type}|{regime}|{split}".encode()
+    digest = hashlib.sha256(key).digest()
+    return struct.unpack_from(">I", digest)[0] & 0x7FFFFFFF

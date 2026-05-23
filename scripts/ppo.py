@@ -75,7 +75,7 @@ def main() -> None:
         rollouts_per_iter=int(pcfg.get("rollouts_per_iter") or 8),
         update_epochs=int(pcfg.get("update_epochs") or 4),
         minibatch_size=int(pcfg.get("minibatch_size") or 16),
-        value_coef=float(pcfg.get("value_coef", 0.5)),
+        value_coef=float(pcfg.get("value_coef", 0.25)),  # matches base.yaml default
         entropy_coef=float(pcfg.get("entropy_coef", 0.01)),
         device=device,
         seed=seed,

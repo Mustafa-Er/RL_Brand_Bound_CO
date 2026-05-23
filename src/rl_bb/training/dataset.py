@@ -6,8 +6,13 @@ the BC training loop sees one branching decision per sample.
 
 For dummy-scale data (hundreds to a few thousand decisions) we load every
 pickle eagerly into memory at construction time — this keeps the data loop
-simple and avoids per-step pickle I/O. For full-scale runs (10⁴+ instances)
-we will need an on-disk index file; that's a Stage-5+ optimization.
+simple and avoids per-step pickle I/O.
+
+.. warning::
+    **TODO (full-scale):** For full-scale runs (10 000+ instances, potentially
+    millions of branching decisions) this eager strategy will exhaust RAM.
+    Replace with an indexed lazy-loader that memory-maps or streams pickles
+    on demand.  Track in GitHub issue before the full-scale run.
 
 The :func:`collate_bipartite` function stitches a list of single-graph
 :class:`BipartiteTensors` samples into one block-diagonal big graph with the

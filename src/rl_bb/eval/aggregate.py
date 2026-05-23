@@ -28,7 +28,8 @@ def _safe_mean(xs: list[float]) -> float:
 
 def _safe_std(xs: list[float]) -> float:
     xs = [x for x in xs if x is not None and not math.isnan(x)]
-    return statistics.pstdev(xs) if len(xs) > 1 else 0.0
+    # stdev (sample, divides by N-1) is correct for reporting uncertainty over seeds.
+    return statistics.stdev(xs) if len(xs) > 1 else 0.0
 
 
 def aggregate(results: Iterable[InstanceResult]) -> list[dict]:
