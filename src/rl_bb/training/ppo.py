@@ -3,10 +3,10 @@
 The model is warm-started from the Stage-5 imitation-learning checkpoint;
 :func:`run_ppo` raises if it does not find one. Each iteration:
 
-1. Roll out the current policy on ``rollouts_per_iter`` training instances.
+1. Roll out the current policy on ``cfg.rollouts_per_iter`` training instances.
 2. Compute GAE advantages and value targets per trajectory.
-3. Concatenate all transitions into one big buffer.
-4. Run ``update_epochs`` passes over shuffled minibatches, applying the
+3. Concatenate all transitions into one buffer.
+4. Run ``cfg.update_epochs`` passes over shuffled minibatches, applying the
    clipped PPO surrogate + value MSE + entropy bonus.
 
 Checkpoints are saved per-iteration to ``<ckpt_dir>/ppo_latest.pt`` and the
@@ -18,7 +18,7 @@ import json
 import logging
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
@@ -29,21 +29,51 @@ from rl_bb.models import GCNN
 from rl_bb.training.dataset import BCSample, collate_bipartite
 from rl_bb.training.gae import compute_gae
 from rl_bb.training.pretrain import load_pretrained_gcnn
-from rl_bb.training.rollout import StepRecord, Trajectory, collect_trajectory
+from rl_bb.training.rollout import Trajectory, collect_trajectory
 
 logger = logging.getLogger(__name__)
 
+_GRAD_CLIP_NORM = 1.0
 
-# ---------------------------------------------------------------------------
-# Buffer + flat tensors
-# ---------------------------------------------------------------------------
+
+@dataclass
+class PPOConfig:
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_eps: float = 0.2
+    lr: float = 3e-5
+    iterations: int = 50
+    rollouts_per_iter: int = 8
+    update_epochs: int = 4
+    minibatch_size: int = 16
+    value_coef: float = 0.25
+    entropy_coef: float = 0.01
+    device: str = "cpu"
+    seed: int = 0
+
 
 @dataclass
 class PPOSample:
-    sample: BCSample        # observation/action/action_set
+    sample: BCSample
     log_prob: float
     advantage: float
     return_: float
+
+
+@dataclass
+class UpdateStats:
+    policy_loss: float
+    value_loss: float
+    entropy: float
+    clip_frac: float
+    approx_kl: float
+
+
+@dataclass
+class PPOPaths:
+    instance_dir: Path
+    pretrain_ckpt: Path
+    ckpt_dir: Path
 
 
 def trajectories_to_samples(
@@ -69,17 +99,8 @@ def trajectories_to_samples(
     return out
 
 
-# ---------------------------------------------------------------------------
-# PPO update
-# ---------------------------------------------------------------------------
-
-@dataclass
-class UpdateStats:
-    policy_loss: float
-    value_loss: float
-    entropy: float
-    clip_frac: float
-    approx_kl: float
+def _stats_mean(records: list[UpdateStats], field: str) -> float:
+    return sum(getattr(r, field) for r in records) / max(1, len(records))
 
 
 def ppo_update_step(
@@ -101,19 +122,18 @@ def ppo_update_step(
         cand = torch.as_tensor(aset, dtype=torch.long, device=logits.device)
         cand_logits = logits[cand]
         log_softmax = F.log_softmax(cand_logits, dim=-1)
-        aset_to_pos = {v: i for i, v in enumerate(aset)}   # O(1) lookup instead of O(N) .index()
+        aset_to_pos = {v: i for i, v in enumerate(aset)}
         target_pos = aset_to_pos[action]
         new_log_probs.append(log_softmax[target_pos])
         probs = log_softmax.exp()
         entropies.append(-(probs * log_softmax).sum())
+
     new_log_probs_t = torch.stack(new_log_probs)
     entropies_t = torch.stack(entropies)
-
     old_log_probs_t = torch.tensor([s.log_prob for s in minibatch], device=device, dtype=torch.float32)
     advantages_t = torch.tensor([s.advantage for s in minibatch], device=device, dtype=torch.float32)
     returns_t = torch.tensor([s.return_ for s in minibatch], device=device, dtype=torch.float32)
 
-    # Advantage normalization (per-minibatch, common PPO trick).
     if advantages_t.numel() > 1:
         advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
 
@@ -121,14 +141,13 @@ def ppo_update_step(
     surr1 = ratio * advantages_t
     surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * advantages_t
     policy_loss = -torch.min(surr1, surr2).mean()
-
     value_loss = F.mse_loss(values, returns_t)
     entropy_mean = entropies_t.mean()
 
     loss = policy_loss + value_coef * value_loss - entropy_coef * entropy_mean
     optimizer.zero_grad()
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=_GRAD_CLIP_NORM)
     optimizer.step()
 
     with torch.no_grad():
@@ -144,48 +163,76 @@ def ppo_update_step(
     )
 
 
-# ---------------------------------------------------------------------------
-# Top-level loop
-# ---------------------------------------------------------------------------
+def _collect_rollouts(
+    env,
+    instances: list[Path],
+    model: GCNN,
+    cfg: PPOConfig,
+    rng: random.Random,
+) -> tuple[list[PPOSample], list[Trajectory]]:
+    picks = rng.sample(instances, cfg.rollouts_per_iter)
+    trajectories = []
+    for inst in picks:
+        env.seed(rng.randrange(2**31))
+        trajectories.append(collect_trajectory(env, inst, model, cfg.device))
+    samples = trajectories_to_samples(trajectories, cfg.gamma, cfg.gae_lambda)
+    return samples, trajectories
 
-@dataclass
-class PPOPaths:
-    instance_dir: Path
-    pretrain_ckpt: Path
-    ckpt_dir: Path
+
+def _run_update_epochs(
+    model: GCNN,
+    optimizer: torch.optim.Optimizer,
+    samples: list[PPOSample],
+    cfg: PPOConfig,
+    rng: random.Random,
+) -> list[UpdateStats]:
+    records: list[UpdateStats] = []
+    model.train()
+    for _ in range(cfg.update_epochs):
+        rng.shuffle(samples)
+        for start in range(0, len(samples), cfg.minibatch_size):
+            mb = samples[start : start + cfg.minibatch_size]
+            if mb:
+                records.append(ppo_update_step(
+                    model, optimizer, mb,
+                    clip_eps=cfg.clip_eps,
+                    value_coef=cfg.value_coef,
+                    entropy_coef=cfg.entropy_coef,
+                    device=cfg.device,
+                ))
+    return records
 
 
-def run_ppo(
-    paths: PPOPaths,
-    env_cfg: EnvConfig,
-    *,
-    gamma: float,
-    gae_lambda: float,
-    clip_eps: float,
-    lr: float,
-    iterations: int,
-    rollouts_per_iter: int,
-    update_epochs: int,
-    minibatch_size: int,
-    value_coef: float,
-    entropy_coef: float,
-    device: str,
-    seed: int,
-) -> dict:
-    torch.manual_seed(seed)
-    rng = random.Random(seed)
+def _build_checkpoint(model: GCNN, optimizer: torch.optim.Optimizer, it: int, mean_reward: float) -> dict:
+    return {
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "feature_dims": (
+            model.var_embed[1][0].in_features,
+            model.cons_embed[1][0].in_features,
+            model.edge_norm.normalized_shape[0],
+        ),
+        "model_config": {"hidden": model.hidden, "n_layers": model.n_layers},
+        "iter": it,
+        "mean_reward": mean_reward,
+    }
+
+
+def run_ppo(paths: PPOPaths, env_cfg: EnvConfig, cfg: PPOConfig) -> dict:
+    torch.manual_seed(cfg.seed)
+    rng = random.Random(cfg.seed)
 
     if not paths.pretrain_ckpt.exists():
         raise FileNotFoundError(
             f"Expected BC checkpoint at {paths.pretrain_ckpt} — run scripts.pretrain first."
         )
-    model = load_pretrained_gcnn(paths.pretrain_ckpt, device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = load_pretrained_gcnn(paths.pretrain_ckpt, device=cfg.device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
 
     instances = sorted(paths.instance_dir.glob("instance_*.mps"))
-    if len(instances) < rollouts_per_iter:
+    if len(instances) < cfg.rollouts_per_iter:
         raise RuntimeError(
-            f"Need at least {rollouts_per_iter} training instances at {paths.instance_dir}, "
+            f"Need at least {cfg.rollouts_per_iter} training instances at {paths.instance_dir}, "
             f"found {len(instances)}."
         )
 
@@ -195,57 +242,27 @@ def run_ppo(
     best_mean_reward = -float("inf")
     history: list[dict] = []
 
-    for it in range(1, iterations + 1):
+    for it in range(1, cfg.iterations + 1):
         t0 = time.perf_counter()
-
-        # ---- Rollout ----
-        picks = rng.sample(instances, rollouts_per_iter)
-        trajectories: list[Trajectory] = []
-        for inst in picks:
-            env.seed(rng.randrange(2**31))
-            trajectories.append(collect_trajectory(env, inst, model, device))
-        samples = trajectories_to_samples(trajectories, gamma, gae_lambda)
+        samples, trajectories = _collect_rollouts(env, instances, model, cfg, rng)
 
         non_empty = [t for t in trajectories if t.steps]
-        mean_reward = (
-            sum(t.sum_reward for t in non_empty) / max(1, len(non_empty))
-        )
-        mean_steps = (
-            sum(len(t.steps) for t in non_empty) / max(1, len(non_empty))
-        )
-        mean_nodes = (
-            sum(t.n_nodes for t in non_empty) / max(1, len(non_empty))
-        )
+        mean_reward = sum(t.sum_reward for t in non_empty) / max(1, len(non_empty))
+        mean_steps  = sum(len(t.steps)  for t in non_empty) / max(1, len(non_empty))
+        mean_nodes  = sum(t.n_nodes     for t in non_empty) / max(1, len(non_empty))
 
         if not samples:
             logger.warning(
-                "iteration %d: every rollout terminated at the root (no branching)."
-                " Skipping update; consider larger instances.",
-                it,
+                "iteration %d: every rollout terminated at the root — skipping update.", it
             )
             history.append({
-                "iter": it, "mean_reward": mean_reward, "mean_steps": mean_steps,
-                "mean_nodes": mean_nodes, "n_samples": 0, "elapsed_s": time.perf_counter() - t0,
+                "iter": it, "mean_reward": mean_reward,
+                "mean_steps": mean_steps, "mean_nodes": mean_nodes,
+                "n_samples": 0, "elapsed_s": time.perf_counter() - t0,
             })
             continue
 
-        # ---- PPO updates ----
-        update_records: list[UpdateStats] = []
-        model.train()   # rollout sets eval(); restore train mode before gradient updates
-        for _ in range(update_epochs):
-            rng.shuffle(samples)
-            for start in range(0, len(samples), minibatch_size):
-                mb = samples[start:start + minibatch_size]
-                if not mb:
-                    continue
-                update_records.append(ppo_update_step(
-                    model, optimizer, mb,
-                    clip_eps=clip_eps, value_coef=value_coef,
-                    entropy_coef=entropy_coef, device=device,
-                ))
-
-        def _mean(field: str) -> float:
-            return sum(getattr(r, field) for r in update_records) / max(1, len(update_records))
+        update_records = _run_update_epochs(model, optimizer, samples, cfg, rng)
 
         record = {
             "iter": it,
@@ -253,12 +270,12 @@ def run_ppo(
             "mean_steps": mean_steps,
             "mean_nodes": mean_nodes,
             "n_samples": len(samples),
-            "policy_loss": _mean("policy_loss"),
-            "value_loss": _mean("value_loss"),
-            "entropy": _mean("entropy"),
-            "clip_frac": _mean("clip_frac"),
-            "approx_kl": _mean("approx_kl"),
-            "elapsed_s": time.perf_counter() - t0,
+            "policy_loss": _stats_mean(update_records, "policy_loss"),
+            "value_loss":  _stats_mean(update_records, "value_loss"),
+            "entropy":     _stats_mean(update_records, "entropy"),
+            "clip_frac":   _stats_mean(update_records, "clip_frac"),
+            "approx_kl":   _stats_mean(update_records, "approx_kl"),
+            "elapsed_s":   time.perf_counter() - t0,
         }
         history.append(record)
         logger.info(
@@ -269,21 +286,11 @@ def run_ppo(
             record["clip_frac"], record["approx_kl"], record["elapsed_s"],
         )
 
-        # ---- Checkpoints ----
-        ckpt_payload = {
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "feature_dims": (model.var_embed[1][0].in_features,
-                             model.cons_embed[1][0].in_features,
-                             model.edge_norm.normalized_shape[0]),
-            "model_config": {"hidden": model.hidden, "n_layers": model.n_layers},
-            "iter": it,
-            "mean_reward": mean_reward,
-        }
-        torch.save(ckpt_payload, paths.ckpt_dir / "ppo_latest.pt")
+        payload = _build_checkpoint(model, optimizer, it, mean_reward)
+        torch.save(payload, paths.ckpt_dir / "ppo_latest.pt")
         if mean_reward > best_mean_reward:
             best_mean_reward = mean_reward
-            torch.save(ckpt_payload, paths.ckpt_dir / "ppo_best.pt")
+            torch.save(payload, paths.ckpt_dir / "ppo_best.pt")
 
     (paths.ckpt_dir / "ppo_history.json").write_text(
         json.dumps(history, indent=2), encoding="utf-8"

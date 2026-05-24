@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from rl_bb.envs import EnvConfig, make_expert_env
+from rl_bb.envs import make_expert_env
 from rl_bb.experts import FSBPolicy, RBPolicy, RandomPolicy, collect_many
 from rl_bb.instances import write_instances
 
@@ -25,27 +25,19 @@ def harder_instance(tmp_path_factory) -> Path:
     return out_dir / "instance_0000.mps"
 
 
-def _env_cfg() -> EnvConfig:
-    return EnvConfig(
-        time_limit_s=30.0,
-        extra_scip_params={"presolving/maxrounds": 0},
-    )
-
-
 # ---------------------------------------------------------------------------
 # Policy contract
 # ---------------------------------------------------------------------------
 
 def test_random_policy_returns_valid_action():
     rp = RandomPolicy(seed=0)
-    # synthetic action_set; observation/model unused by RandomPolicy
     action = rp.act(observation=None, action_set=[3, 7, 11], model=None)
     assert action in (3, 7, 11)
 
 
 @pytest.mark.parametrize("policy_cls", [FSBPolicy, RBPolicy])
-def test_expert_picks_action_from_action_set(harder_instance: Path, policy_cls):
-    env = make_expert_env(_env_cfg())
+def test_expert_picks_action_from_action_set(harder_instance: Path, no_presolve_env_cfg, policy_cls):
+    env = make_expert_env(no_presolve_env_cfg)
     env.seed(0)
     policy = policy_cls()
     policy.reset()
@@ -62,7 +54,7 @@ def test_expert_picks_action_from_action_set(harder_instance: Path, policy_cls):
 # Demonstration collection end-to-end
 # ---------------------------------------------------------------------------
 
-def test_collect_many_writes_one_pickle_per_instance(tmp_path: Path):
+def test_collect_many_writes_one_pickle_per_instance(tmp_path: Path, no_presolve_env_cfg):
     inst_dir = tmp_path / "inst"
     inst_dir.mkdir()
     write_instances(
@@ -75,7 +67,7 @@ def test_collect_many_writes_one_pickle_per_instance(tmp_path: Path):
     instances = sorted(inst_dir.glob("*.mps"))
     out_dir = tmp_path / "demos"
 
-    written = collect_many(instances, FSBPolicy(), _env_cfg(), out_dir, seed=0)
+    written = collect_many(instances, FSBPolicy(), no_presolve_env_cfg, out_dir, seed=0)
     assert written == 2
     pkls = sorted(out_dir.glob("*.pkl"))
     assert len(pkls) == 2

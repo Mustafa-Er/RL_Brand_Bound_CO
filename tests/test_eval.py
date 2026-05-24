@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from rl_bb.envs import EnvConfig, make_branching_env, make_expert_env
+from rl_bb.envs import make_branching_env, make_expert_env
 from rl_bb.eval import aggregate, evaluate_on_instance, write_results
 from rl_bb.eval.runner import InstanceResult
 from rl_bb.experts import FSBPolicy, RandomPolicy
@@ -25,16 +25,12 @@ def hard_instance(tmp_path_factory) -> Path:
     return out_dir / "instance_0000.mps"
 
 
-def _env_cfg() -> EnvConfig:
-    return EnvConfig(time_limit_s=30.0, extra_scip_params={"presolving/maxrounds": 0})
-
-
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
-def test_runner_returns_finite_metrics(hard_instance: Path):
-    env = make_branching_env(_env_cfg())
+def test_runner_returns_finite_metrics(hard_instance: Path, no_presolve_env_cfg):
+    env = make_branching_env(no_presolve_env_cfg)
     res = evaluate_on_instance(
         env, hard_instance, RandomPolicy(seed=0),
         policy_name="random", regime="train_size", split="test", seed=0,
@@ -44,8 +40,8 @@ def test_runner_returns_finite_metrics(hard_instance: Path):
     assert res.n_decisions >= 0
 
 
-def test_fsb_runs_with_expert_env(hard_instance: Path):
-    env = make_expert_env(_env_cfg())
+def test_fsb_runs_with_expert_env(hard_instance: Path, no_presolve_env_cfg):
+    env = make_expert_env(no_presolve_env_cfg)
     res = evaluate_on_instance(
         env, hard_instance, FSBPolicy(),
         policy_name="fsb", regime="train_size", split="test", seed=0,

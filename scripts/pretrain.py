@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from rl_bb.training import PretrainPaths, run_pretrain
+from rl_bb.training import PretrainConfig, PretrainPaths, run_pretrain
 from rl_bb.utils import (
     configure_logging,
     load_config,
@@ -67,16 +67,16 @@ def main() -> None:
 
     mcfg = cfg.get("model", {}).get("gcnn", {})
     pcfg = cfg.get("pretrain", {})
-    out = run_pretrain(
-        paths,
+    pretrain_cfg = PretrainConfig(
         hidden=int(mcfg.get("embedding_size", 64)),
         n_layers=int(mcfg.get("n_layers", 2)),
         lr=float(pcfg.get("lr") or 1e-3),
-        epochs=int(pcfg.get("epochs") or 20),
-        batch_size=int(pcfg.get("batch_size") or 16),
+        epochs=int(pcfg.get("epochs") or 30),
+        batch_size=int(pcfg.get("batch_size") or 32),
         device=device,
         seed=seed,
     )
+    out = run_pretrain(paths, pretrain_cfg)
     logger.info("Best val loss: %.4f", out["best_val_loss"])
 
 

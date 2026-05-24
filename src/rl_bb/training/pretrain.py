@@ -138,18 +138,19 @@ class PretrainPaths:
     ckpt_dir: Path
 
 
-def run_pretrain(
-    paths: PretrainPaths,
-    *,
-    hidden: int,
-    n_layers: int,
-    lr: float,
-    epochs: int,
-    batch_size: int,
-    device: str,
-    seed: int,
-) -> dict:
-    torch.manual_seed(seed)
+@dataclass
+class PretrainConfig:
+    hidden: int = 64
+    n_layers: int = 2
+    lr: float = 1e-3
+    epochs: int = 30
+    batch_size: int = 32
+    device: str = "cpu"
+    seed: int = 0
+
+
+def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
+    torch.manual_seed(cfg.seed)
 
     train_set = BCDataset(paths.train_root)
     val_set = BCDataset(paths.val_root)
@@ -160,26 +161,25 @@ def run_pretrain(
     d_var, d_cons, d_edge = infer_feature_dims(sample.observation)
     logger.info("Feature dims: var=%d cons=%d edge=%d", d_var, d_cons, d_edge)
 
-    model = GCNN(d_var, d_cons, d_edge, hidden=hidden, n_layers=n_layers).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = GCNN(d_var, d_cons, d_edge, hidden=cfg.hidden, n_layers=cfg.n_layers).to(cfg.device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
 
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True,
-        collate_fn=collate_bipartite,
+        train_set, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_bipartite,
     )
-    val_loader = DataLoader(
-        val_set, batch_size=batch_size, shuffle=False,
-        collate_fn=collate_bipartite,
-    ) if len(val_set) > 0 else None
+    val_loader = (
+        DataLoader(val_set, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_bipartite)
+        if len(val_set) > 0 else None
+    )
 
     paths.ckpt_dir.mkdir(parents=True, exist_ok=True)
     best_val_loss = float("inf")
     history: list[dict] = []
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, cfg.epochs + 1):
         t0 = time.perf_counter()
-        train_stats = train_one_epoch(model, train_loader, optimizer, device)
-        val_stats = evaluate(model, val_loader, device) if val_loader is not None else None
+        train_stats = train_one_epoch(model, train_loader, optimizer, cfg.device)
+        val_stats = evaluate(model, val_loader, cfg.device) if val_loader is not None else None
         elapsed = time.perf_counter() - t0
 
         record = {
@@ -201,7 +201,6 @@ def run_pretrain(
             elapsed,
         )
 
-        # Save best by val loss (or last if no val).
         score = val_stats.loss if val_stats else train_stats.loss
         if score < best_val_loss:
             best_val_loss = score
@@ -210,7 +209,7 @@ def run_pretrain(
                     "model_state": model.state_dict(),
                     "optimizer_state": optimizer.state_dict(),
                     "feature_dims": (d_var, d_cons, d_edge),
-                    "model_config": {"hidden": hidden, "n_layers": n_layers},
+                    "model_config": {"hidden": cfg.hidden, "n_layers": cfg.n_layers},
                     "epoch": epoch,
                     "val_loss": best_val_loss,
                 },

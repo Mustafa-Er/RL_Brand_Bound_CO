@@ -10,7 +10,7 @@ import torch
 from rl_bb.envs import EnvConfig, make_branching_env
 from rl_bb.instances import write_instances
 from rl_bb.models import GCNN, infer_feature_dims
-from rl_bb.training import PPOPaths, collect_trajectory, compute_gae, run_ppo
+from rl_bb.training import PPOConfig, PPOPaths, collect_trajectory, compute_gae, run_ppo
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +128,11 @@ def test_run_ppo_one_iteration(tmp_path: Path):
     }, pretrain_ckpt)
 
     paths = PPOPaths(instance_dir=inst_dir, pretrain_ckpt=pretrain_ckpt, ckpt_dir=ckpt_dir)
-    out = run_ppo(
-        paths,
-        EnvConfig(time_limit_s=30.0, extra_scip_params={"presolving/maxrounds": 0}),
+    ppo_cfg = PPOConfig(
         gamma=0.99, gae_lambda=0.95, clip_eps=0.2, lr=1e-4,
         iterations=1, rollouts_per_iter=2, update_epochs=1, minibatch_size=4,
-        value_coef=0.5, entropy_coef=0.01,
-        device="cpu", seed=0,
+        value_coef=0.25, entropy_coef=0.01, device="cpu", seed=0,
     )
+    out = run_ppo(paths, EnvConfig(time_limit_s=30.0, extra_scip_params={"presolving/maxrounds": 0}), ppo_cfg)
     assert len(out["history"]) == 1
     assert (ckpt_dir / "ppo_latest.pt").exists()

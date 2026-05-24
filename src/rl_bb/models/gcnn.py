@@ -28,10 +28,6 @@ import torch.nn.functional as F
 from rl_bb.models.obs_to_tensors import BipartiteTensors
 
 
-# ---------------------------------------------------------------------------
-# Building blocks
-# ---------------------------------------------------------------------------
-
 def _mlp(in_dim: int, hidden: int, out_dim: int) -> nn.Sequential:
     return nn.Sequential(
         nn.Linear(in_dim, hidden),
@@ -76,10 +72,6 @@ class BipartiteConv(nn.Module):
         return self.update(torch.cat([dst_h, agg], dim=-1))
 
 
-# ---------------------------------------------------------------------------
-# Main model
-# ---------------------------------------------------------------------------
-
 class GCNN(nn.Module):
     """Shared-backbone bipartite GCNN with policy and value heads.
 
@@ -113,10 +105,6 @@ class GCNN(nn.Module):
 
         # Value head: mean-pool variable embeddings, then MLP → scalar.
         self.value_head = _mlp(hidden, hidden, 1)
-
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
 
     def _backbone(self, t: BipartiteTensors) -> torch.Tensor:
         """Return the final variable embeddings ``(n_vars, hidden)``."""

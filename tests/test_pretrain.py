@@ -15,6 +15,7 @@ from rl_bb.instances import write_instances
 from rl_bb.models import GCNN, infer_feature_dims
 from rl_bb.training import (
     BCDataset,
+    PretrainConfig,
     PretrainPaths,
     collate_bipartite,
     load_pretrained_gcnn,
@@ -123,13 +124,7 @@ def test_run_pretrain_end_to_end(tiny_demo_dir: Path, tmp_path: Path):
 
     out = run_pretrain(
         paths,
-        hidden=16,
-        n_layers=1,
-        lr=1e-3,
-        epochs=2,
-        batch_size=4,
-        device="cpu",
-        seed=0,
+        PretrainConfig(hidden=16, n_layers=1, lr=1e-3, epochs=2, batch_size=4, device="cpu", seed=0),
     )
     assert len(out["history"]) == 2
     ckpt = paths.ckpt_dir / "pretrain_best.pt"

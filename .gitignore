@@ -56,8 +56,3 @@ checkpoints/
 *.log
 .env
 .env.local
-# Claude Code / IDE config (local-only, not for the team repo)
-.claude/
-CLAUDE.md
-claude.md
-Kaynaklar/

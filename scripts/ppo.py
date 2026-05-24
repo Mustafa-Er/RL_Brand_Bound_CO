@@ -15,7 +15,7 @@ import argparse
 import logging
 
 from rl_bb.envs import env_config_from_dict
-from rl_bb.training import PPOPaths, run_ppo
+from rl_bb.training import PPOConfig, PPOPaths, run_ppo
 from rl_bb.utils import (
     configure_logging,
     load_config,
@@ -64,22 +64,21 @@ def main() -> None:
 
     env_cfg = env_config_from_dict(cfg.get("env", {}))
     pcfg = cfg.get("ppo", {})
-    out = run_ppo(
-        paths,
-        env_cfg,
+    ppo_cfg = PPOConfig(
         gamma=float(pcfg.get("gamma", 0.99)),
         gae_lambda=float(pcfg.get("gae_lambda", 0.95)),
         clip_eps=float(pcfg.get("clip_eps", 0.2)),
-        lr=float(pcfg.get("lr") or 1e-4),
+        lr=float(pcfg.get("lr") or 3e-5),
         iterations=int(pcfg.get("iterations") or 50),
         rollouts_per_iter=int(pcfg.get("rollouts_per_iter") or 8),
         update_epochs=int(pcfg.get("update_epochs") or 4),
         minibatch_size=int(pcfg.get("minibatch_size") or 16),
-        value_coef=float(pcfg.get("value_coef", 0.25)),  # matches base.yaml default
+        value_coef=float(pcfg.get("value_coef", 0.25)),
         entropy_coef=float(pcfg.get("entropy_coef", 0.01)),
         device=device,
         seed=seed,
     )
+    out = run_ppo(paths, env_cfg, ppo_cfg)
     logger.info("Best mean reward: %.4f", out["best_mean_reward"])
 
 
