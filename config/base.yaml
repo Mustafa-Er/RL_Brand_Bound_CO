@@ -48,9 +48,15 @@ pretrain:
   # force_retrain  → always retrain and overwrite
   # load_only      → require an existing checkpoint, error if missing
   mode: auto
-  epochs: 30
-  lr: 1.0e-3
+  epochs: 2000
+  lr: 1.0e-2
   batch_size: 32
+  log_every: 10           # epochs between stdout log lines (history records every epoch)
+  scheduler:
+    patience: 50          # epochs without val-loss improvement before halving lr
+    factor: 0.5
+    min_lr: 5.0e-5
+    threshold: 1.0e-4     # minimum val-loss drop counted as "improvement"
 
 ppo:
   gamma: 0.99

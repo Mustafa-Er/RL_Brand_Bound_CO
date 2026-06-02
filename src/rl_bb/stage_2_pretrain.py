@@ -241,11 +241,16 @@ class PretrainPaths:
 class PretrainConfig:
     hidden: int = 64
     n_layers: int = 2
-    lr: float = 1e-3
-    epochs: int = 30
+    lr: float = 1e-2
+    epochs: int = 2000
     batch_size: int = 32
     device: str = "cpu"
     seed: int = 0
+    log_every: int = 10
+    scheduler_patience: int = 50
+    scheduler_factor: float = 0.5
+    scheduler_min_lr: float = 5e-5
+    scheduler_threshold: float = 1e-4
 
 
 def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
@@ -273,6 +278,14 @@ def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
 
     model = GCNN(d_var, d_cons, d_edge, hidden=hidden, n_layers=n_layers).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=cfg.scheduler_factor,
+        patience=cfg.scheduler_patience,
+        min_lr=cfg.scheduler_min_lr,
+        threshold=cfg.scheduler_threshold,
+    )
 
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_bipartite
@@ -284,33 +297,21 @@ def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
     paths.ckpt_dir.mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
     history: list[dict] = []
+    log_every = max(1, int(cfg.log_every))
 
     for epoch in range(1, epochs + 1):
         t0 = time.perf_counter()
         train_stats = _train_one_epoch(model, train_loader, optimizer, device)
         val_stats = _evaluate(model, val_loader, device) if val_loader is not None else None
         elapsed = time.perf_counter() - t0
+        current_lr = optimizer.param_groups[0]["lr"]
 
-        record = {
-            "epoch": epoch,
-            "train_loss": train_stats.loss,
-            "train_top1": train_stats.top1, "train_top5": train_stats.top5,
-            "val_loss": val_stats.loss if val_stats else None,
-            "val_top1": val_stats.top1 if val_stats else None,
-            "val_top5": val_stats.top5 if val_stats else None,
-            "elapsed_s": elapsed,
-        }
-        history.append(record)
-        logger.info(
-            "epoch %3d | train loss=%.4f top1=%.3f top5=%.3f | val %s | %.1fs",
-            epoch, train_stats.loss, train_stats.top1, train_stats.top5,
-            (f"loss={val_stats.loss:.4f} top1={val_stats.top1:.3f} top5={val_stats.top5:.3f}"
-             if val_stats else "—"),
-            elapsed,
-        )
-
+        # Scheduler step on whichever loss drives "improvement".
         score = val_stats.loss if val_stats else train_stats.loss
-        if score < best_val:
+        scheduler.step(score)
+
+        improved = score < best_val
+        if improved:
             best_val = score
             save_gcnn(
                 model,
@@ -318,6 +319,29 @@ def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
                 optimizer_state=optimizer.state_dict(),
                 epoch=epoch,
                 val_loss=best_val,
+            )
+
+        history.append({
+            "epoch": epoch,
+            "lr": current_lr,
+            "train_loss": train_stats.loss,
+            "train_top1": train_stats.top1, "train_top5": train_stats.top5,
+            "val_loss": val_stats.loss if val_stats else None,
+            "val_top1": val_stats.top1 if val_stats else None,
+            "val_top5": val_stats.top5 if val_stats else None,
+            "elapsed_s": elapsed,
+            "best_val_so_far": best_val,
+        })
+
+        # Log on cadence, on the first/last epoch, or when a new best is found.
+        if epoch == 1 or epoch == epochs or epoch % log_every == 0 or improved:
+            tag = " *best*" if improved else ""
+            logger.info(
+                "epoch %4d | lr=%.2e | train loss=%.4f top1=%.3f | val %s | %.2fs%s",
+                epoch, current_lr,
+                train_stats.loss, train_stats.top1,
+                (f"loss={val_stats.loss:.4f} top1={val_stats.top1:.3f}" if val_stats else "—"),
+                elapsed, tag,
             )
 
     (paths.ckpt_dir / "pretrain_history.json").write_text(
@@ -371,14 +395,20 @@ def run_stage_2(
     _ensure_demos(paths.val_root, paths.val_instance_dir, env_cfg, seed + 1)
 
     mcfg = cfg.get("model", {}).get("gcnn", {})
+    sched = pcfg.get("scheduler") or {}
     pre_cfg = PretrainConfig(
         hidden=int(mcfg.get("embedding_size", 64)),
         n_layers=int(mcfg.get("n_layers", 2)),
-        lr=float(pcfg.get("lr") or 1e-3),
-        epochs=int(pcfg.get("epochs") or 20),
-        batch_size=int(pcfg.get("batch_size") or 16),
+        lr=float(pcfg.get("lr") or 1e-2),
+        epochs=int(pcfg.get("epochs") or 2000),
+        batch_size=int(pcfg.get("batch_size") or 32),
         device=device,
         seed=seed,
+        log_every=int(pcfg.get("log_every", 10)),
+        scheduler_patience=int(sched.get("patience", 50)),
+        scheduler_factor=float(sched.get("factor", 0.5)),
+        scheduler_min_lr=float(sched.get("min_lr", 5e-5)),
+        scheduler_threshold=float(sched.get("threshold", 1e-4)),
     )
     logger.info("Training (mode=%s) -> %s", mode, ckpt_path)
     result = run_pretrain(paths, pre_cfg)

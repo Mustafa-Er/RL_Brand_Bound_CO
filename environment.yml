@@ -2,6 +2,7 @@ name: rl_bb
 
 channels:
   - pytorch
+  - nvidia
   - pyg
   - conda-forge
 
@@ -19,11 +20,13 @@ dependencies:
   - conda-forge::ecole
   - conda-forge::pyscipopt
 
-  # PyTorch (CPU build by default; for CUDA see README)
+  # PyTorch with CUDA 12.4 build (forward-compatible with CUDA 13.x drivers).
+  # If you have no GPU, swap the pytorch-cuda line for `pytorch::cpuonly`.
   - pytorch::pytorch
   - pytorch::torchvision
   - pytorch::torchaudio
-  - pytorch::cpuonly
+  - pytorch::pytorch-cuda=12.4
+  - nvidia::cuda-toolkit=12.4
 
   # PyTorch Geometric
   - pyg::pyg
