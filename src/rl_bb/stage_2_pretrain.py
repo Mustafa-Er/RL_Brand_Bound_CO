@@ -93,19 +93,39 @@ def collect_demonstrations(
     env_cfg: EnvConfig,
     out_dir: Path,
     seed: int = 0,
+    overwrite: bool = False,
 ) -> int:
     """Roll out ``policy`` on each instance and write one ``.pkl`` per instance.
 
-    Policy-agnostic for testability. In production callers pass ``RBPolicy()``;
-    tests sometimes pass ``FSBPolicy()`` to exercise the same code path.
+    Resumable: instances whose pickle already exists are skipped unless
+    ``overwrite=True``. This makes killing and restarting a long collection
+    safe — work already on disk is reused.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    instances = list(instances)
+    # Build the list of instances that still need work.
+    targets: list[tuple[int, Path, Path]] = []
+    skipped = 0
+    for i, inst in enumerate(instances):
+        target = out_dir / f"{Path(inst).stem}.pkl"
+        if target.exists() and not overwrite:
+            skipped += 1
+            continue
+        targets.append((i, inst, target))
+    if skipped:
+        logger.info(
+            "  resume: %d/%d demos already on disk, collecting %d remaining",
+            skipped, len(instances), len(targets),
+        )
+
+    if not targets:
+        return 0
+
     env = make_expert_env(env_cfg)
     written = 0
-    for i, inst in enumerate(instances):
+    for i, inst, target in targets:
         env.seed(seed + i)
         traj = _collect_one(env, inst, policy)
-        target = out_dir / f"{Path(inst).stem}.pkl"
         with open(target, "wb") as f:
             pickle.dump(traj, f, protocol=pickle.HIGHEST_PROTOCOL)
         logger.info(
@@ -132,16 +152,30 @@ def _ensure_demos(
     env_cfg: EnvConfig,
     seed: int,
 ) -> None:
-    """Generate demonstrations for ``split_dir`` if it is missing or empty."""
-    if split_dir.exists() and any(split_dir.glob("*.pkl")):
-        return
+    """Generate demonstrations for ``split_dir``, resuming any partial state.
+
+    For each ``.mps`` instance we expect a matching ``.pkl`` in ``split_dir``.
+    Missing pickles are collected; existing ones are kept. This makes the
+    collection step idempotent and crash-safe.
+    """
     instances = sorted(instance_dir.glob("instance_*.mps"))
     if not instances:
         raise FileNotFoundError(
             f"No instances at {instance_dir}; run Stage 1 first."
         )
-    logger.info("Collecting %d RB demos -> %s", len(instances), split_dir)
-    collect_rb_demonstrations(instances, env_cfg, split_dir, seed=seed)
+    split_dir.mkdir(parents=True, exist_ok=True)
+    existing = {p.stem for p in split_dir.glob("*.pkl")}
+    needed = [inst for inst in instances if inst.stem not in existing]
+    if not needed:
+        logger.info("Demos already complete (%d files) at %s", len(instances), split_dir)
+        return
+    logger.info(
+        "Collecting %d/%d RB demos (skipping %d already on disk) -> %s",
+        len(needed), len(instances), len(existing), split_dir,
+    )
+    # collect_rb_demonstrations re-applies the same resume guard internally,
+    # but feeding only the needed instances keeps the log tidy.
+    collect_rb_demonstrations(needed, env_cfg, split_dir, seed=seed)
 
 
 # ===========================================================================
