@@ -1,30 +1,14 @@
 """Branching policies usable inside the Branching env.
 
-All policies share the same call signature::
+Roles:
 
-    action = policy.act(observation, action_set, model)
-
-Roles in this project:
-
-* :class:`RBPolicy` — *the* imitation-learning expert. Pretraining
-  demonstrations are produced by rolling this policy out on training
-  instances (Stage 3 + Stage 5).
-* :class:`FSBPolicy` — Stage 7 evaluation baseline (Full Strong Branching).
-  Not used for demonstration collection.
+* :class:`RBPolicy` — the imitation-learning expert. Stage 2 collects
+  demonstrations by rolling this policy out on training instances and trains
+  the GCNN on its decisions.
+* :class:`FSBPolicy` — Stage 4 evaluation baseline (Full Strong Branching).
 * :class:`RandomPolicy` — sanity-check baseline.
 
-Observation type depends on the env factory used:
-
-* :func:`rl_bb.envs.make_branching_env` returns the bipartite observation
-  alone — suitable for RL inference (:class:`RandomPolicy` works here).
-* :func:`rl_bb.envs.make_expert_env` returns a tuple
-  ``(bipartite, strong_branching_scores)`` — needed by :class:`FSBPolicy`
-  and :class:`RBPolicy`.
-
-:class:`RBPolicy` implements reliability pseudocost branching
-(Achterberg 2007): for each candidate variable, do full strong branching
-until it has been branched ``reliability`` times in each direction, then
-switch to SCIP's running pseudocost score.
+All three share the signature ``act(observation, action_set, model) -> int``.
 """
 from __future__ import annotations
 
@@ -33,15 +17,12 @@ from typing import Protocol
 
 
 class Policy(Protocol):
-    """Anything that maps (observation, action_set, model) -> action."""
-
     def act(self, observation, action_set, model) -> int: ...
-
     def reset(self) -> None: ...
 
 
 class RandomPolicy:
-    """Uniform random over the LP-fractional branching candidates."""
+    """Uniform random over LP-fractional branching candidates."""
 
     def __init__(self, seed: int = 0) -> None:
         self._rng = random.Random(seed)
@@ -56,8 +37,7 @@ class RandomPolicy:
 class FSBPolicy:
     """Argmax over Full Strong Branching scores.
 
-    Expects the expert env's tuple observation ``(bipartite, sb_scores)``;
-    ``sb_scores`` is an array indexed by SCIP variable position.
+    Expects the expert env's tuple observation ``(bipartite, sb_scores)``.
     """
 
     def reset(self) -> None:
@@ -74,7 +54,7 @@ class RBPolicy:
     For each candidate, count up- and down-branching observations via SCIP's
     pseudocost machinery. If the minimum count is below ``reliability``, score
     the candidate with its strong-branching score; otherwise use SCIP's
-    running pseudocost score. Pick the argmax.
+    running pseudocost score.
     """
 
     def __init__(self, reliability: int = 4) -> None:
@@ -100,12 +80,11 @@ class RBPolicy:
             if score > best_score:
                 best_score = score
                 best_idx = int(v_idx)
-        # Fall back to first candidate if all scores were -inf (shouldn't happen).
         return int(best_idx if best_idx is not None else next(iter(action_set)))
 
 
 # ---------------------------------------------------------------------------
-# Defensive PySCIPOpt accessors
+# Defensive PySCIPOpt accessors (signatures vary across versions)
 # ---------------------------------------------------------------------------
 
 def _pseudocost_counts(model, var) -> tuple[float, float]:

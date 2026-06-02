@@ -8,9 +8,15 @@ import pytest
 import torch
 
 from rl_bb.envs import EnvConfig, make_branching_env
-from rl_bb.instances import write_instances
-from rl_bb.models import GCNN, infer_feature_dims
-from rl_bb.training import PPOConfig, PPOPaths, collect_trajectory, compute_gae, run_ppo
+from rl_bb.model import GCNN, infer_feature_dims
+from rl_bb.stage_1_instances import write_instances
+from rl_bb.stage_3_ppo import (
+    PPOConfig,
+    PPOPaths,
+    collect_trajectory,
+    compute_gae,
+    run_ppo,
+)
 
 
 # ---------------------------------------------------------------------------

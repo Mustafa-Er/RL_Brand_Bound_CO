@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from rl_bb.envs import EnvConfig, make_branching_env
-from rl_bb.instances import write_instances
-from rl_bb.models import GCNN, RLPolicy, infer_feature_dims, obs_to_tensors
+from rl_bb.model import GCNN, RLPolicy, infer_feature_dims, obs_to_tensors
+from rl_bb.stage_1_instances import write_instances
 
 
 @pytest.fixture(scope="module")

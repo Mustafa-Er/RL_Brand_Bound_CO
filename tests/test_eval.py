@@ -6,10 +6,14 @@ from pathlib import Path
 import pytest
 
 from rl_bb.envs import make_branching_env, make_expert_env
-from rl_bb.eval import aggregate, evaluate_on_instance, write_results
-from rl_bb.eval.runner import InstanceResult
 from rl_bb.experts import FSBPolicy, RandomPolicy
-from rl_bb.instances import write_instances
+from rl_bb.stage_1_instances import write_instances
+from rl_bb.stage_4_eval import (
+    InstanceResult,
+    aggregate,
+    evaluate_on_instance,
+    write_results,
+)
 
 
 @pytest.fixture(scope="module")

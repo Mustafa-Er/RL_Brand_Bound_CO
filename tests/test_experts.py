@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from rl_bb.envs import make_expert_env
-from rl_bb.experts import FSBPolicy, RBPolicy, RandomPolicy, collect_many
-from rl_bb.instances import write_instances
+from rl_bb.experts import FSBPolicy, RBPolicy, RandomPolicy
+from rl_bb.stage_1_instances import write_instances
+from rl_bb.stage_2_pretrain import collect_demonstrations as collect_many
 
 
 @pytest.fixture(scope="module")

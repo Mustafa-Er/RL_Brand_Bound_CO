@@ -1,23 +1,16 @@
-"""Behavioral-cloning dataset and collate function for branching demos.
+"""Behavioral-cloning dataset + manual bipartite batching.
 
-Each ``.pkl`` produced by Stage 3 contains one full episode's worth of
-``(observation, action, action_set)`` tuples. We flatten the episodes so
-the BC training loop sees one branching decision per sample.
+A ``.pkl`` produced by Stage 2 demonstration collection holds one full
+episode's worth of ``(observation, action, action_set)`` tuples. We flatten
+these so the BC training loop sees one branching decision per sample.
 
-For dummy-scale data (hundreds to a few thousand decisions) we load every
-pickle eagerly into memory at construction time — this keeps the data loop
-simple and avoids per-step pickle I/O.
+``collate_bipartite`` stitches a list of single-graph samples into one
+block-diagonal big graph with the right index offsets, plus a ``graph_ids``
+vector so the value head can mean-pool per-graph.
 
-.. warning::
-    **TODO (full-scale):** For full-scale runs (10 000+ instances, potentially
-    millions of branching decisions) this eager strategy will exhaust RAM.
-    Replace with an indexed lazy-loader that memory-maps or streams pickles
-    on demand.  Track in GitHub issue before the full-scale run.
-
-The :func:`collate_bipartite` function stitches a list of single-graph
-:class:`BipartiteTensors` samples into one block-diagonal big graph with the
-appropriate index offsets, plus a ``graph_ids`` vector so the value head
-can mean-pool per-graph.
+Eager loading is used: dummy-scale data fits in RAM. For full-scale runs
+(10⁴+ instances) the OS will need to swap; a lazy-loader is left as
+documented future work.
 """
 from __future__ import annotations
 
@@ -30,24 +23,24 @@ from typing import Iterable
 import torch
 from torch.utils.data import Dataset
 
-from rl_bb.models.obs_to_tensors import BipartiteTensors, obs_to_tensors
+from rl_bb.model import BipartiteTensors, obs_to_tensors
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class BCSample:
-    observation: object              # ecole NodeBipartiteObs
-    action: int                      # SCIP variable index
-    action_set: list[int]            # candidate variable indices
+    observation: object
+    action: int
+    action_set: list[int]
 
 
 @dataclass
 class BipartiteBatch:
     tensors: BipartiteTensors
-    actions: list[int]               # global (post-offset) action per sample
-    action_sets: list[list[int]]     # global candidate sets per sample
-    graph_ids: torch.Tensor          # (total_n_vars,) which graph each var belongs to
+    actions: list[int]
+    action_sets: list[list[int]]
+    graph_ids: torch.Tensor
 
     def to(self, device) -> "BipartiteBatch":
         return BipartiteBatch(
@@ -59,7 +52,7 @@ class BipartiteBatch:
 
 
 class BCDataset(Dataset):
-    """Flat (observation, action, action_set) view over all demonstrations."""
+    """Flat ``(observation, action, action_set)`` view over all demonstrations."""
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -74,13 +67,11 @@ class BCDataset(Dataset):
             for obs, act, aset in zip(
                 traj["observations"], traj["actions"], traj["action_sets"]
             ):
-                self.samples.append(
-                    BCSample(
-                        observation=obs,
-                        action=int(act),
-                        action_set=[int(v) for v in aset],
-                    )
-                )
+                self.samples.append(BCSample(
+                    observation=obs,
+                    action=int(act),
+                    action_set=[int(v) for v in aset],
+                ))
         logger.info(
             "Loaded %d branching decisions from %d pickle(s) in %s",
             len(self.samples), len(pickles), self.root,
@@ -94,7 +85,7 @@ class BCDataset(Dataset):
 
 
 def collate_bipartite(batch: Iterable[BCSample]) -> BipartiteBatch:
-    """Stack a list of :class:`BCSample` into a single batched graph."""
+    """Stack a list of :class:`BCSample` into one batched graph."""
     var_offsets = [0]
     cons_offsets = [0]
     all_var, all_cons, all_eidx, all_eattr, graph_ids = [], [], [], [], []

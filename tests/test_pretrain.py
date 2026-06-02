@@ -1,27 +1,22 @@
-"""Stage 5 tests: BC dataset, batched collate, overfit-one-sample, ckpt I/O."""
+"""Stage 2 tests: BC dataset, batched collate, overfit-one-sample, ckpt I/O."""
 from __future__ import annotations
 
-import pickle
-import random
 from pathlib import Path
 
 import pytest
 import torch
-from torch.utils.data import DataLoader
 
-from rl_bb.envs import EnvConfig, make_expert_env
-from rl_bb.experts import RBPolicy, collect_many
-from rl_bb.instances import write_instances
-from rl_bb.models import GCNN, infer_feature_dims
-from rl_bb.training import (
-    BCDataset,
+from rl_bb.data import BCDataset, collate_bipartite
+from rl_bb.experts import RBPolicy
+from rl_bb.model import GCNN, infer_feature_dims, load_gcnn
+from rl_bb.stage_1_instances import write_instances
+from rl_bb.stage_2_pretrain import (
     PretrainConfig,
     PretrainPaths,
-    collate_bipartite,
-    load_pretrained_gcnn,
+    _step_loss,
+    collect_demonstrations,
     run_pretrain,
 )
-from rl_bb.training.pretrain import _step_loss
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +24,7 @@ from rl_bb.training.pretrain import _step_loss
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def tiny_demo_dir(tmp_path_factory) -> Path:
+def tiny_demo_dir(tmp_path_factory, no_presolve_env_cfg) -> Path:
     """Produce a small RB demonstration dataset under tmp/<split>/rb/."""
     root = tmp_path_factory.mktemp("demos")
     inst_dir = root / "inst"
@@ -42,12 +37,11 @@ def tiny_demo_dir(tmp_path_factory) -> Path:
         seed=7,
     )
     instances = sorted(inst_dir.glob("*.mps"))
-    env_cfg = EnvConfig(time_limit_s=30.0, extra_scip_params={"presolving/maxrounds": 0})
 
     train_out = root / "train" / "rb"
     val_out = root / "val" / "rb"
-    collect_many(instances[:2], RBPolicy(), env_cfg, train_out, seed=0)
-    collect_many(instances[2:], RBPolicy(), env_cfg, val_out, seed=1)
+    collect_demonstrations(instances[:2], RBPolicy(), no_presolve_env_cfg, train_out, seed=0)
+    collect_demonstrations(instances[2:], RBPolicy(), no_presolve_env_cfg, val_out, seed=1)
     return root
 
 
@@ -68,13 +62,10 @@ def test_collate_batches_two_samples(tiny_demo_dir: Path):
     if len(ds) < 2:
         pytest.skip("need at least 2 decisions")
     batch = collate_bipartite([ds[0], ds[1]])
-    # graph_ids must label each variable with 0 or 1, two graphs total.
     assert set(batch.graph_ids.tolist()) == {0, 1}
-    # actions live in the global indexing scheme.
     n_vars = batch.tensors.var_features.shape[0]
     for a in batch.actions:
         assert 0 <= a < n_vars
-    # action_sets contain valid global indices.
     for aset in batch.action_sets:
         for v in aset:
             assert 0 <= v < n_vars
@@ -130,5 +121,5 @@ def test_run_pretrain_end_to_end(tiny_demo_dir: Path, tmp_path: Path):
     ckpt = paths.ckpt_dir / "pretrain_best.pt"
     assert ckpt.exists()
 
-    model = load_pretrained_gcnn(ckpt, device="cpu")
+    model = load_gcnn(ckpt, device="cpu")
     assert isinstance(model, GCNN)

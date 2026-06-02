@@ -44,6 +44,10 @@ model:
     activation: relu
 
 pretrain:
+  # auto           → load checkpoint if present, else train (default, friendliest)
+  # force_retrain  → always retrain and overwrite
+  # load_only      → require an existing checkpoint, error if missing
+  mode: auto
   epochs: 30
   lr: 1.0e-3
   batch_size: 32

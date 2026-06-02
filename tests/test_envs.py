@@ -12,7 +12,7 @@ from rl_bb.envs import (
     env_config_from_dict,
     make_branching_env,
 )
-from rl_bb.instances import write_instances
+from rl_bb.stage_1_instances import write_instances
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +71,7 @@ def test_random_policy_solves_small_instance(small_instance: Path):
 
 def test_branching_triggers_on_harder_instance(tmp_path: Path):
     """Use a larger combinatorial auction so SCIP cannot solve at the root."""
-    from rl_bb.instances import write_instances
+    from rl_bb.stage_1_instances import write_instances
 
     write_instances(
         "combinatorial_auction",

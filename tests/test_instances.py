@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from rl_bb.instances import generate_all, make_generator, write_instances
+from rl_bb.stage_1_instances import generate_all, make_generator, write_instances
 
 
 # ---------------------------------------------------------------------------

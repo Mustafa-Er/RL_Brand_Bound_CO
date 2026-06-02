@@ -85,20 +85,29 @@ python -c "import ecole, pyscipopt, torch, torch_geometric; print('ok')"
 
 ```
 RL_Brand_Bound_CO/
-├── config/             # YAML configs (base.yaml + experiment overrides)
-├── src/rl_bb/          # Library code
-│   ├── instances/      # Instance generators (Stage 1)
-│   ├── envs/           # Ecole env wrappers, DFS node selection (Stage 2)
-│   ├── experts/        # RB expert (Stage 3) + FSB/Random baselines (Stage 7)
-│   ├── models/         # GCNN policy + value heads (Stage 4)
-│   ├── training/       # pretrain.py (Stage 5), ppo.py (Stage 6)
-│   ├── eval/           # Evaluation pipeline (Stage 7)
-│   └── utils/          # Logging, seeding, paths
-├── scripts/            # CLI entry points
-├── tests/              # Unit tests
-├── data/               # Generated instances (git-ignored)
-└── logs/               # Training / eval logs (git-ignored)
+├── config/                  # YAML configs: base.yaml + dummy.yaml override
+├── notebooks/
+│   └── demo.ipynb           # End-to-end walkthrough of all four stages
+├── src/rl_bb/               # Library code (one module per concern)
+│   ├── utils.py             # Config loader, seeding, logging, paths
+│   ├── envs.py              # Ecole branching env, DFS, dual-bound-gain reward
+│   ├── experts.py           # RB expert + FSB / Random baselines
+│   ├── model.py             # GCNN + observation→tensor + checkpoint I/O
+│   ├── data.py              # BC dataset + manual bipartite batching
+│   ├── stage_1_instances.py # CLI: instance generation (+ optional env smoke)
+│   ├── stage_2_pretrain.py  # CLI: GCNN + SL with caching
+│   ├── stage_3_ppo.py       # CLI: PPO + GAE warm-started from Stage 2
+│   └── stage_4_eval.py      # CLI: Random vs FSB vs PPO across regimes
+├── tests/                   # pytest suite covering each stage
+├── data/                    # Generated instances + demonstrations (git-ignored)
+├── checkpoints/             # Model checkpoints (git-ignored)
+└── logs/                    # Stage logs + eval CSV/JSON (git-ignored)
 ```
+
+Each stage module is runnable both from the command line
+(`python -m rl_bb.stage_N_...`) and from the demo notebook
+(`from rl_bb.stage_N_... import run_stage_N`), so you can mix scripted and
+interactive workflows freely.
 
 ---
 
@@ -112,9 +121,9 @@ pip install -e .
 
 ### End-to-end reproduction (dummy mode)
 
-If you just cloned the repo and want to reproduce the full pipeline from
-scratch, run the following commands in order. Dummy mode finishes in under
-two minutes on a CPU and exercises every stage:
+The project is organized into **four stages**, each a single Python module
+under `src/rl_bb/`. Run them in order; dummy mode finishes in 3–5 minutes on
+a CPU and exercises every stage end to end:
 
 ```bash
 # 0. One-time setup (see Setup section above first)
@@ -122,172 +131,81 @@ conda activate rl_bb
 pip install -e .
 
 # 1. Generate MILP instances (set covering + combinatorial auction)
-python -m scripts.generate_instances \
-    --config config/base.yaml --config config/dummy.yaml
-
-# 2. Sanity-check the Ecole env with a random policy (optional)
-python -m scripts.run_env_smoke \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --n-instances 3
-
-# 3. Collect Reliability Branching demonstrations for train + val
-python -m scripts.collect_demonstrations \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --split train
-python -m scripts.collect_demonstrations \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --split val
-
-# 4. (Optional) GCNN forward-pass smoke check
-python -m scripts.check_model \
-    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
-
-# 5. Behavioral-cloning pretraining
-python -m scripts.pretrain \
+#    Add --smoke to also run a random-policy rollout for sanity.
+python -m rl_bb.stage_1_instances \
     --config config/base.yaml --config config/dummy.yaml \
     --problem combinatorial_auction
 
-# 6. PPO training (warm-starts from the Stage-5 checkpoint)
-python -m scripts.ppo \
+# 2. GCNN + Supervised Learning (behavioral cloning on RB demonstrations).
+#    Cache modes via config.pretrain.mode or --mode:
+#      auto           load checkpoint if present, else collect demos and train
+#      force_retrain  always retrain, overwrite any checkpoint
+#      load_only      require an existing checkpoint, error if missing
+python -m rl_bb.stage_2_pretrain \
     --config config/base.yaml --config config/dummy.yaml \
     --problem combinatorial_auction
 
-# 7. Evaluation: Random vs. FSB vs. PPO across all three size regimes
-python -m scripts.eval \
+# 3. PPO+GAE training (warm-starts from the Stage 2 checkpoint).
+python -m rl_bb.stage_3_ppo \
+    --config config/base.yaml --config config/dummy.yaml \
+    --problem combinatorial_auction
+
+# 4. Evaluation: Random vs. FSB vs. PPO across all three size regimes.
+python -m rl_bb.stage_4_eval \
     --config config/base.yaml --config config/dummy.yaml \
     --problem combinatorial_auction
 ```
 
 Results land under `data/rl_bb_dummy/` (instances + demonstrations),
 `checkpoints/rl_bb_dummy/` (model weights), and `logs/rl_bb_dummy/`
-(training logs + final eval CSV/JSON).
+(stage logs + final eval CSV/JSON).
 
 For the **full-scale run** that backs the paper's results, drop
-`--config config/dummy.yaml` from every command above so only
-`config/base.yaml` is used. This grows instances from a few hundred to ten
-thousand and PPO from 3 to 50 iterations; expect hours to a day depending on
-hardware. The remainder of this section documents each stage individually
-for selective re-runs and debugging.
+`--config config/dummy.yaml` so only `config/base.yaml` is used. This grows
+instances from a few hundred to ten thousand and PPO from 3 to 50
+iterations; expect hours to a day depending on hardware.
 
-### Stage 1 — Generate instances
+### Stage details
 
-Dummy mode (small instances, end-to-end verification, ~1 min):
+#### Stage 1 — `rl_bb.stage_1_instances`
+Generates `.mps` files for set covering and combinatorial auction at three
+size regimes (`train_size`, `transfer_medium`, `transfer_large`). Pass
+`--smoke` to additionally roll a random policy through a couple of
+instances and confirm the Ecole env wires up correctly.
 
-```bash
-python -m scripts.generate_instances \
-    --config config/base.yaml --config config/dummy.yaml
-```
+#### Stage 2 — `rl_bb.stage_2_pretrain` ("GCNN + SL")
+Three things in one module:
+1. Collects Reliability Branching demonstrations (if missing).
+2. Trains a bipartite GCNN on those demos with supervised cross-entropy
+   over each sample's action set.
+3. Writes the best-by-val-loss checkpoint to
+   `checkpoints/<exp>/pretrain_best.pt`.
 
-Full mode (literature-size, much longer):
+`config.pretrain.mode` controls whether to retrain or reuse the cached
+checkpoint (`auto` / `force_retrain` / `load_only`). Override at the
+command line with `--mode`.
 
-```bash
-python -m scripts.generate_instances --config config/base.yaml
-```
+#### Stage 3 — `rl_bb.stage_3_ppo`
+PPO+GAE on the Branching env; warm-starts from `pretrain_best.pt`. Writes
+`ppo_latest.pt` (every iter), `ppo_best.pt` (best mean reward), and
+`ppo_history.json`. Errors out if the Stage 2 checkpoint is missing.
 
-Limit to one problem type with `--problem set_covering` or
-`--problem combinatorial_auction`. Output goes to
-`data/<experiment.name>/<problem>/<regime>/<split>/instance_XXXX.mps`.
+#### Stage 4 — `rl_bb.stage_4_eval`
+Runs Random, FSB, and the trained PPO policy on the **test** split of all
+three regimes across the seeds listed in `config.eval.seeds`. Writes:
 
-Run unit tests:
+- `logs/<exp>/eval_detail.csv`  — one row per (instance, policy, seed)
+- `logs/<exp>/eval_summary.csv` — mean / std per (policy, regime, split)
+- `logs/<exp>/eval_summary.json`
+
+Subset the policies with `--policies random fsb` or restrict instances with
+`--max-instances 5` for quick smoke runs.
+
+### Run unit tests
 
 ```bash
 pytest tests/
 ```
-
-### Stage 2 — Random-policy environment smoke test
-
-Roll out a uniform-random branching policy through a few dummy instances to
-verify the DFS-forced Ecole env, the bipartite observation, and the
-dual-bound-gain reward all wire up correctly:
-
-```bash
-python -m scripts.run_env_smoke \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem set_covering --n-instances 3
-```
-
-Logs land in `logs/env_smoke.log`.
-
-### Stage 3 — Collect Reliability Branching demonstrations
-
-Reliability Branching is the sole expert for imitation pretraining. Roll
-it out on both the train and val splits so Stage 5 has data for both:
-
-```bash
-python -m scripts.collect_demonstrations \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --split train
-
-python -m scripts.collect_demonstrations \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction --split val
-```
-
-Output goes to
-`data/<experiment.name>/demonstrations/<problem>/<regime>/<split>/rb/`.
-
-FSB and Random are kept as evaluation baselines (Stage 7); they are not
-collected as demonstrations.
-
-### Stage 4 — GCNN forward-pass check
-
-Verify the bipartite GCNN constructs, runs forward, and backpropagates on a
-real demonstration sample (any non-empty pickle from Stage 3 works):
-
-```bash
-python -m scripts.check_model \
-    --demo data/rl_bb_dummy/demonstrations/combinatorial_auction/train_size/train/rb/instance_0018.pkl
-```
-
-### Stage 5 — Imitation pretraining (behavioral cloning)
-
-After collecting RB demonstrations for the chosen problem on both train and
-val splits, run:
-
-```bash
-python -m scripts.pretrain \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction
-```
-
-The best-by-val-loss checkpoint lands at
-`checkpoints/<experiment.name>/pretrain_best.pt`, alongside
-`pretrain_history.json`.
-
-### Stage 6 — PPO training
-
-Warm-starts from `pretrain_best.pt` and updates the GCNN with PPO+GAE on
-rollouts through the branching environment:
-
-```bash
-python -m scripts.ppo \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction
-```
-
-Outputs:
-- `checkpoints/<experiment.name>/ppo_latest.pt` — latest weights
-- `checkpoints/<experiment.name>/ppo_best.pt`   — best-by-mean-reward
-- `checkpoints/<experiment.name>/ppo_history.json` — per-iteration metrics
-
-### Stage 7 — Evaluation
-
-Runs Random, FSB, and the trained PPO policy on the **test** split of all
-three size regimes (training-size + transfer-medium + transfer-large) across
-multiple seeds, then writes:
-
-- `logs/<experiment.name>/eval_detail.csv`  — per-(policy, regime, seed, instance) rows
-- `logs/<experiment.name>/eval_summary.csv` — mean ± std per (policy, regime)
-- `logs/<experiment.name>/eval_summary.json` — same summary, machine-readable
-
-```bash
-python -m scripts.eval \
-    --config config/base.yaml --config config/dummy.yaml \
-    --problem combinatorial_auction
-```
-
-Subset the policies with `--policies random fsb` or restrict instances with
-`--max-instances 5` for quick smoke runs.
 
 ---
 
