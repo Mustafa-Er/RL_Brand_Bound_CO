@@ -179,9 +179,36 @@ def run_stage_4(
 
     data_root = resolve_path(cfg["paths"]["data_dir"]) / cfg["experiment"]["name"]
     ckpt_dir = resolve_path(cfg["paths"]["ckpt_dir"]) / cfg["experiment"]["name"]
-    env_cfg = env_config_from_dict(cfg.get("env", {}))
-    seeds = list(cfg.get("eval", {}).get("seeds", [0, 1, 2, 3, 4]))
-    logger.info("seeds=%s device=%s policies=%s", seeds, device, policies)
+
+    # Eval section may override the training-time env limits.
+    eval_cfg = cfg.get("eval", {})
+    env_dict = dict(cfg.get("env", {}))
+    if "time_limit_s" in eval_cfg:
+        env_dict["time_limit_s"] = eval_cfg["time_limit_s"]
+    env_cfg = env_config_from_dict(env_dict)
+
+    seeds = list(eval_cfg.get("seeds", [0, 1, 2, 3, 4]))
+    # Config-level cap; CLI --max-instances overrides if smaller.
+    cfg_max = eval_cfg.get("max_instances")
+    if cfg_max is not None and (max_instances is None or int(cfg_max) < max_instances):
+        max_instances = int(cfg_max)
+
+    # Optional subset of size regimes (default: all three).
+    cfg_regimes = eval_cfg.get("regimes")
+    if cfg_regimes:
+        bad = [r for r in cfg_regimes if r not in REGIMES]
+        if bad:
+            raise ValueError(
+                f"Unknown eval.regimes entries {bad}. Allowed: {list(REGIMES)}"
+            )
+        regimes_to_run = tuple(cfg_regimes)
+    else:
+        regimes_to_run = REGIMES
+
+    logger.info(
+        "seeds=%s device=%s policies=%s regimes=%s time_limit=%ss max_instances=%s",
+        seeds, device, policies, regimes_to_run, env_cfg.time_limit_s, max_instances,
+    )
 
     def policies_iter():
         if "random" in policies:
@@ -203,7 +230,7 @@ def run_stage_4(
     per_instance: list[InstanceResult] = []
     for policy_name, env_factory, policy_factory in policies_iter():
         env = env_factory(env_cfg)
-        for regime in REGIMES:
+        for regime in regimes_to_run:
             bucket = data_root / problem / regime / split
             if not bucket.exists():
                 logger.warning("Skip %s/%s/%s — directory missing.", problem, regime, split)
@@ -214,13 +241,22 @@ def run_stage_4(
             if not instances:
                 logger.warning("No instances in %s.", bucket)
                 continue
+            total = len(instances) * len(seeds)
+            done = 0
             for s in seeds:
                 policy = policy_factory()
                 for inst in instances:
-                    per_instance.append(evaluate_on_instance(
+                    res = evaluate_on_instance(
                         env, inst, policy,
                         policy_name=policy_name, regime=regime, split=split, seed=s,
-                    ))
+                    )
+                    per_instance.append(res)
+                    done += 1
+                    logger.info(
+                        "  [%s | %s | seed=%d] %s | nodes=%.0f wall=%.2fs (%d/%d)",
+                        policy_name, regime, s, res.instance,
+                        res.n_nodes, res.wall_time_s, done, total,
+                    )
             logger.info("done: policy=%s regime=%s instances=%d seeds=%d",
                         policy_name, regime, len(instances), len(seeds))
 

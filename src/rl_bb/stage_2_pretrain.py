@@ -41,7 +41,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from rl_bb.data import BCDataset, BipartiteBatch, collate_bipartite
+from rl_bb.data import (
+    BCDataset,
+    BipartiteBatch,
+    PickleGroupedBatchSampler,
+    collate_bipartite,
+)
 from rl_bb.envs import EnvConfig, env_config_from_dict, make_expert_env
 from rl_bb.experts import RBPolicy
 from rl_bb.model import GCNN, infer_feature_dims, save_gcnn
@@ -285,6 +290,10 @@ class PretrainConfig:
     scheduler_factor: float = 0.5
     scheduler_min_lr: float = 5e-5
     scheduler_threshold: float = 1e-4
+    dataset_cache_size: int = 32     # LRU size for the lazy BCDataset
+    num_workers: int = 4             # DataLoader workers (parallel pickle reads)
+    max_train_pickles: int | None = None   # cap training pickles (None = use all)
+    max_val_pickles: int | None = None     # cap validation pickles (None = use all)
 
 
 def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
@@ -301,8 +310,16 @@ def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
     batch_size = cfg.batch_size
     device = cfg.device
     seed = cfg.seed
-    train_set = BCDataset(paths.train_root)
-    val_set = BCDataset(paths.val_root)
+    train_set = BCDataset(
+        paths.train_root,
+        cache_size=cfg.dataset_cache_size,
+        max_pickles=cfg.max_train_pickles,
+    )
+    val_set = BCDataset(
+        paths.val_root,
+        cache_size=cfg.dataset_cache_size,
+        max_pickles=cfg.max_val_pickles,
+    )
     if len(train_set) == 0:
         raise RuntimeError(f"No training samples found under {paths.train_root}")
 
@@ -321,12 +338,31 @@ def run_pretrain(paths: PretrainPaths, cfg: PretrainConfig) -> dict:
         threshold=cfg.scheduler_threshold,
     )
 
+    # Pickle-grouped batches: each batch's samples come from one pickle, so the
+    # lazy BCDataset reads every pickle at most once per epoch. With the LRU
+    # cache (size = dataset_cache_size) this collapses I/O from O(batches) to
+    # O(pickles) per epoch.
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_bipartite
+        train_set,
+        batch_sampler=PickleGroupedBatchSampler(
+            train_set, batch_size, shuffle=True, seed=seed,
+        ),
+        collate_fn=collate_bipartite,
+        num_workers=cfg.num_workers,
+        persistent_workers=cfg.num_workers > 0,
     )
-    val_loader = DataLoader(
-        val_set, batch_size=batch_size, shuffle=False, collate_fn=collate_bipartite
-    ) if len(val_set) > 0 else None
+    if len(val_set) > 0:
+        val_loader = DataLoader(
+            val_set,
+            batch_sampler=PickleGroupedBatchSampler(
+                val_set, batch_size, shuffle=False, seed=seed,
+            ),
+            collate_fn=collate_bipartite,
+            num_workers=cfg.num_workers,
+            persistent_workers=cfg.num_workers > 0,
+        )
+    else:
+        val_loader = None
 
     paths.ckpt_dir.mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
@@ -443,6 +479,14 @@ def run_stage_2(
         scheduler_factor=float(sched.get("factor", 0.5)),
         scheduler_min_lr=float(sched.get("min_lr", 5e-5)),
         scheduler_threshold=float(sched.get("threshold", 1e-4)),
+        dataset_cache_size=int(pcfg.get("dataset_cache_size", 32)),
+        num_workers=int(pcfg.get("num_workers", 4)),
+        max_train_pickles=(
+            int(pcfg["max_train_pickles"]) if pcfg.get("max_train_pickles") else None
+        ),
+        max_val_pickles=(
+            int(pcfg["max_val_pickles"]) if pcfg.get("max_val_pickles") else None
+        ),
     )
     logger.info("Training (mode=%s) -> %s", mode, ckpt_path)
     result = run_pretrain(paths, pre_cfg)

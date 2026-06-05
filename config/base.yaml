@@ -39,7 +39,7 @@ expert:
 
 model:
   gcnn:
-    embedding_size: 64
+    embedding_size: 32      # 64 → 32 (VRAM ~%75 azalır)
     n_layers: 2
     activation: relu
 
@@ -48,12 +48,23 @@ pretrain:
   # force_retrain  → always retrain and overwrite
   # load_only      → require an existing checkpoint, error if missing
   mode: auto
-  epochs: 2000
-  lr: 1.0e-2
-  batch_size: 32
-  log_every: 10           # epochs between stdout log lines (history records every epoch)
+  epochs: 30              # BC converges fast on 1M+ decisions/epoch; 30 is enough
+  lr: 1.0e-3
+  batch_size: 32          # smaller to keep VRAM well below 8 GB and avoid spillover
+  log_every: 5            # epochs between stdout log lines (history records every epoch)
+  # Lazy BCDataset keeps only `dataset_cache_size` pickles in RAM at a time.
+  # Raise if you have plenty of RAM (faster), lower if OOM (slower).
+  dataset_cache_size: 16
+  # DataLoader workers: parallel pickle reads. 0 = single-process (more stable).
+  # Set > 0 only if disk I/O is the bottleneck and you've validated worker stability.
+  num_workers: 0
+  # Use only the first N pickles for train / val to keep the dataset tractable.
+  # null → use everything that was collected. With ~100 decisions/pickle,
+  # 2000 train pickles ≈ 200K decisions per epoch, plenty for BC.
+  max_train_pickles: 2000
+  max_val_pickles: 500
   scheduler:
-    patience: 50          # epochs without val-loss improvement before halving lr
+    patience: 15          # epochs without val-loss improvement before halving lr
     factor: 0.5
     min_lr: 5.0e-5
     threshold: 1.0e-4     # minimum val-loss drop counted as "improvement"
@@ -67,7 +78,7 @@ ppo:
   # the shared backbone. Lower lr + smaller value_coef tames the first few
   # iterations until V(s) catches up to typical return magnitudes.
   lr: 3.0e-5
-  iterations: 50
+  iterations: 1000
   rollouts_per_iter: 8
   update_epochs: 4
   minibatch_size: 16
@@ -77,3 +88,13 @@ ppo:
 eval:
   metrics: [wall_time, node_count, dual_integral]
   seeds: [0, 1, 2, 3, 4]
+  # Per-instance time limit applied only during evaluation. Keep this much
+  # smaller than env.time_limit_s (3600) so a single hard instance can't
+  # stall an entire seed sweep. 60-120 s is a typical Gasse-style budget.
+  time_limit_s: 120
+  # Cap how many test instances we evaluate per regime (per seed). null = use all.
+  max_instances: 10
+  # Which size regimes to evaluate. Must be a subset of:
+  #   [train_size, transfer_medium, transfer_large]
+  # Drop transfer_large/medium when their instances are too slow for the time budget.
+  regimes: [train_size]

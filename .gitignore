@@ -52,6 +52,9 @@ checkpoints/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
+# Claude Code local tooling
+.claude/
+
 # Misc
 *.log
 .env
